@@ -14,11 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 複製應用程式
 COPY . .
 
-# 將 js 目錄複製到 static 裡（使靜態檔案掛載時可以存取）
-RUN cp -r js static/js
-
-# 建立音檔目錄（由外部 volume 掛載時會被覆蓋）
-RUN mkdir -p static/audio
+# 建立音檔目錄和複製靜態資源
+RUN mkdir -p static/audio && cp -r js static/js
 
 EXPOSE 5555
 
