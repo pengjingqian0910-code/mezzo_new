@@ -99,6 +99,13 @@ def require_admin(user: dict = Depends(get_current_user)):
 # ====== FastAPI ======
 app = FastAPI(title="WiB VMS Web System")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+# ====== 主頁路由 ======
+@app.get("/")
+@app.get("/index_3D.html")
+async def get_index():
+    return FileResponse("index_3D.html", media_type="text/html")
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ====== WebSocket 管理器 ======
