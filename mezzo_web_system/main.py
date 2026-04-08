@@ -450,7 +450,7 @@ def get_nvr_history(channels: str, begin_time: str, end_time: str):
             "EndTime": end_time,
             "Channels": channels,
             "Auth": NVR_AUTH
-        })
+        }, quote_via=urllib.parse.quote)
         url = f"http://{NVR_HOST}/GetBackupList.cgi?{params}"
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Basic {NVR_AUTH}")
@@ -567,7 +567,7 @@ def query_nvr_events(begin_time: str, end_time: str, event_type: str = "", devic
         params["Start"] = start
         params["Limit"] = limit
 
-        qs = urllib.parse.urlencode(params)
+        qs = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
         url = f"http://{NVR_HOST}/QueryEvent.cgi?{qs}"
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Basic {NVR_AUTH}")
