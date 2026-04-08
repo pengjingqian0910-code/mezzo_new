@@ -110,7 +110,11 @@ export default {
                             <span class="text-[10px] text-gray-400 font-mono" v-if="selectedFile">{{ selectedFile.BeginTime }}</span>
                         </div>
                         <div class="aspect-video bg-gray-900">
-                            <video ref="videoPlayer"
+                            <div v-if="useStreamPlayback" class="w-full h-full">
+                                <img :src="mjpegStreamSrc" alt="MJPEG Stream" class="w-full h-full object-contain">
+                            </div>
+                            <video v-else
+                                   ref="videoPlayer"
                                    :src="videoSrc"
                                    @timeupdate="onTimeUpdate"
                                    @loadedmetadata="onVideoLoaded"
@@ -167,6 +171,8 @@ export default {
         const audioFiles      = ref([]);
         const isLoadingFiles  = ref(false);
         const videoSrc        = ref('');
+        const mjpegStreamSrc  = ref('');
+        const useStreamPlayback = ref(false);  // true = MJPEG stream, false = downloaded video
 
         const currentDateObj  = ref(new Date());
         const currentYear     = computed(() => currentDateObj.value.getFullYear());
@@ -215,6 +221,8 @@ export default {
             audioFiles.value = [];
             selectedFile.value = null;
             videoSrc.value = '';
+            mjpegStreamSrc.value = '';
+            useStreamPlayback.value = false;
             currentDateObj.value = new Date();
 
             // 顯示該設備的最後已知 GPS 位置
@@ -254,6 +262,8 @@ export default {
             pbSelectedDate.value = `${currentYear.value}-${padZero(currentMonth.value)}-${padZero(day)}`;
             selectedFile.value = null;
             videoSrc.value = '';
+            mjpegStreamSrc.value = '';
+            useStreamPlayback.value = false;
             fileList.value = [];
             audioFiles.value = [];
             isLoadingFiles.value = true;
@@ -299,7 +309,18 @@ export default {
             isPlaying.value = false;
             currentTime.value = 0;
             duration.value = 0;
-            // AVI 透過後端 redirect 播放
+
+            // 優先使用 MJPEG 串流回放（實時按需解碼），失敗時降級至下載 AVI
+            let channel = 0;
+            if (selectedDevice.value.device_id.startsWith('NVR_CH')) {
+                channel = parseInt(selectedDevice.value.device_id.replace('NVR_CH', ''));
+            }
+
+            // 嘗試 MJPEG 流回放
+            mjpegStreamSrc.value = `/api/nvr/playback_stream/${channel}?time=${encodeURIComponent(f.BeginTime)}`;
+            useStreamPlayback.value = true;
+
+            // 同時也保留 AVI 下載作為備用
             videoSrc.value = `/api/nvr/download/avi?tag=${encodeURIComponent(f.Tag)}`;
         };
 
@@ -309,7 +330,7 @@ export default {
 
         // ====== 播放控制 ======
         const togglePlay = () => {
-            if (!videoPlayer.value) return;
+            if (!videoPlayer.value || useStreamPlayback.value) return;  // MJPEG 流自動播放
             if (isPlaying.value) { videoPlayer.value.pause(); }
             else { videoPlayer.value.play(); }
             isPlaying.value = !isPlaying.value;
@@ -318,7 +339,7 @@ export default {
         const onVideoLoaded = () => { duration.value = videoPlayer.value?.duration || 0; };
 
         const onTimeUpdate = () => {
-            if (isDragging.value) return;
+            if (isDragging.value || useStreamPlayback.value) return;
             currentTime.value = videoPlayer.value?.currentTime || 0;
         };
 
@@ -329,7 +350,7 @@ export default {
 
         const onSliderChange = (e) => {
             isDragging.value = false;
-            if (videoPlayer.value) videoPlayer.value.currentTime = parseFloat(e.target.value);
+            if (videoPlayer.value && !useStreamPlayback.value) videoPlayer.value.currentTime = parseFloat(e.target.value);
         };
 
         onMounted(() => { setTimeout(initMap, 100); });
@@ -337,7 +358,7 @@ export default {
 
         return {
             store, selectedDevice, selectedFile, fileList, audioFiles,
-            isLoadingFiles, videoSrc, videoPlayer, currentGps,
+            isLoadingFiles, videoSrc, mjpegStreamSrc, useStreamPlayback, videoPlayer, currentGps,
             currentYear, currentMonth, daysInMonth, blankDays,
             recordStatusArray, pbSelectedDate,
             isPlaying, currentTime, duration,

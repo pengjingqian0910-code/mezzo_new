@@ -316,23 +316,61 @@ export default {
             fetchDevicePositions();
         };
 
-        const executeSearch = () => {
+        const executeSearch = async () => {
             if (!searchQuery.value.deviceId) {
                 alert("請先選擇要搜尋的設備 ID！");
                 return;
             }
 
-            // 產生模擬的假資料供介面展示
-            searchResults.value = [
-                { id: 1, time: '2026-03-18 14:32:15', deviceId: searchQuery.value.deviceId, type: 'SOS', details: '警員長按 SOS 鍵觸發緊急求救' },
-                { id: 2, time: '2026-03-18 11:20:05', deviceId: searchQuery.value.deviceId, type: 'MARK', details: '標記重點：發現可疑違停車輛 (車牌: ABC-1234)' },
-                { id: 3, time: '2026-03-18 09:45:00', deviceId: searchQuery.value.deviceId, type: 'HR_ALERT', details: '配對心率帶異常，心率突增至 165 bpm' },
-                { id: 4, time: '2026-03-17 22:15:30', deviceId: searchQuery.value.deviceId, type: 'MARK', details: '標記重點：夜間臨檢紀錄' }
-            ];
+            if (!searchQuery.value.startTime || !searchQuery.value.endTime) {
+                alert("請選擇開始和結束時間！");
+                return;
+            }
 
-            // 根據事件類型進行簡單的前端過濾
-            if (searchQuery.value.eventType !== 'ALL') {
-                searchResults.value = searchResults.value.filter(e => e.type === searchQuery.value.eventType);
+            try {
+                // 轉換時間格式：從 2026-03-18T14:32 轉為 2026-03-18 14:32:00
+                const formatTime = (dt) => {
+                    if (!dt) return '';
+                    return dt.replace('T', ' ') + ':00';
+                };
+
+                const beginTime = formatTime(searchQuery.value.startTime);
+                const endTime = formatTime(searchQuery.value.endTime);
+                const eventType = searchQuery.value.eventType !== 'ALL' ? searchQuery.value.eventType : '';
+
+                const params = new URLSearchParams({
+                    begin_time: beginTime,
+                    end_time: endTime,
+                    device_id: searchQuery.value.deviceId,
+                    event_type: eventType,
+                    start: 0,
+                    limit: 100
+                });
+
+                const res = await fetch(`/api/nvr/query_event?${params.toString()}`);
+
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                }
+
+                const data = await res.json();
+
+                // 將 NVR 事件映射到前端格式
+                if (data.data && Array.isArray(data.data)) {
+                    searchResults.value = data.data.map((evt, idx) => ({
+                        id: idx,
+                        time: evt.EventTime || evt.time || '未知時間',
+                        deviceId: evt.DeviceID || searchQuery.value.deviceId,
+                        type: evt.EventType || evt.type || 'UNKNOWN',
+                        details: evt.EventDesc || evt.description || '事件詳情'
+                    }));
+                } else {
+                    searchResults.value = [];
+                }
+            } catch (e) {
+                console.error('Event search error:', e);
+                alert(`查詢失敗: ${e.message}`);
+                searchResults.value = [];
             }
         };
 

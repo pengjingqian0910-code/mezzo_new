@@ -545,6 +545,91 @@ def get_device_positions():
     """回傳目前所有設備的最新位置（MQTT 接收後存記憶體）"""
     return device_positions
 
+# ====== NVR 事件查詢 API ======
+@app.get("/api/nvr/query_event")
+def query_nvr_events(begin_time: str, end_time: str, event_type: str = "", device_id: str = "", start: int = 0, limit: int = 100):
+    """
+    查詢 NVR 事件歷史（通過 QueryEvent.cgi）
+    begin_time / end_time 格式：YYYY-MM-DD HH:mm:ss (需 URLEncode)
+    event_type：事件類型（可選，例如 SOS、MARK 等）
+    device_id：設備ID（可選）
+    """
+    try:
+        params = {
+            "BeginTime": begin_time,
+            "EndTime": end_time,
+            "Auth": NVR_AUTH
+        }
+        if event_type:
+            params["EventType"] = event_type
+        if device_id:
+            params["DeviceID"] = device_id
+        params["Start"] = start
+        params["Limit"] = limit
+
+        qs = urllib.parse.urlencode(params)
+        url = f"http://{NVR_HOST}/QueryEvent.cgi?{qs}"
+        req = urllib.request.Request(url)
+        req.add_header("Authorization", f"Basic {NVR_AUTH}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = resp.read().decode('utf-8')
+            try:
+                return json.loads(data)
+            except json.JSONDecodeError:
+                return {"raw": data}
+    except Exception as e:
+        print(f"[NVR] QueryEvent error: {e}")
+        raise HTTPException(status_code=500, detail="無法查詢 NVR 事件")
+
+# ====== 影像串流 API ======
+@app.get("/api/nvr/live_stream/{channel}")
+def get_nvr_live_stream(channel: int):
+    """
+    取得 NVR 直播 MJPEG 串流
+    返回以 HTTP 重定向形式指向 NVR 的 mjpeg_stream.cgi
+    """
+    from fastapi.responses import RedirectResponse
+    params = urllib.parse.urlencode({
+        "Auth": NVR_AUTH,
+        "ch": channel,
+        "metadata": "0"
+    })
+    return RedirectResponse(url=f"http://{NVR_HOST}/mjpeg_stream.cgi?{params}")
+
+@app.get("/api/nvr/playback_stream/{channel}")
+def get_nvr_playback_stream(channel: int, time: str):
+    """
+    取得 NVR 回放 MJPEG 串流
+    time 格式: YYYY-MM-DD HH:mm:ss
+    返回 MJPEG 串流
+    """
+    from fastapi.responses import RedirectResponse
+    # 轉換時間格式給 RTSP
+    encoded_time = urllib.parse.quote(time)
+    params = urllib.parse.urlencode({
+        "Auth": NVR_AUTH,
+        "ch": channel,
+        "clientid": "web",
+        "playback": encoded_time  # 某些版本使用 playback 參數
+    })
+    return RedirectResponse(url=f"http://{NVR_HOST}/mjpeg_stream.cgi?{params}")
+
+@app.get("/api/nvr/snapshot/{channel}")
+def get_nvr_snapshot(channel: int, time: str = ""):
+    """
+    取得 NVR 快照
+    time 格式: YYYYmmddTHHMMSSZ (可選，不指定則取最新快照)
+    """
+    from fastapi.responses import RedirectResponse
+    params = {
+        "Ch": channel,
+        "Auth": NVR_AUTH
+    }
+    if time:
+        params["Time"] = time
+    qs = urllib.parse.urlencode(params)
+    return RedirectResponse(url=f"http://{NVR_HOST}/Snapshot.cgi?{qs}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=5555, reload=True)
