@@ -379,6 +379,27 @@ def operator_self_bind(data: dict, db: Session = Depends(get_db),
     return {"msg": f"已綁定設備 {device_id}", "device_id": device_id}
 
 # ====== NVR 即時 APIs ======
+@app.get("/api/nvr/server_info")
+def get_nvr_server_info():
+    """
+    取得 NVR 伺服器資訊（型號、版本、主機名、連接埠、頻道數等）
+    """
+    import re
+    try:
+        url = f"http://{NVR_HOST}/GetServerInfo.cgi?Auth={NVR_AUTH}"
+        req = urllib.request.Request(url)
+        req.add_header("Authorization", f"Basic {NVR_AUTH}")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = resp.read().decode('utf-8')
+            try:
+                return json.loads(data)
+            except json.JSONDecodeError:
+                fixed = re.sub(r'([{,]\s*)([a-zA-Z0-9_]+)\s*:', r'\1"\2":', data)
+                return json.loads(fixed)
+    except Exception as e:
+        print(f"[NVR] GetServerInfo error: {e}")
+        raise HTTPException(status_code=500, detail="無法連線至 NVR")
+
 @app.get("/api/nvr/cameras")
 def get_nvr_cameras():
     import re
