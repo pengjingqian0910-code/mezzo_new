@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+
+# Database (不上傳，每次部署自動建立)
+mezzo_web_system/mezzo.db
+
+# 音檔（業務資料，不上傳）
+mezzo_web_system/static/audio/*
+!mezzo_web_system/static/audio/.gitkeep
+
+# 環境設定（含敏感資訊）
+mezzo_web_system/.env
+
+# macOS
+__MACOSX/
+.DS_Store
+
+# IDE
+.vscode/
+.claude/
+*.code-workspace

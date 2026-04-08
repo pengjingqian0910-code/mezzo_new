@@ -1,0 +1,199 @@
+// js/DashboardTab.js
+import { ref } from 'vue';
+import { store } from './store.js';
+
+export default {
+    template: `
+        <div class="w-full h-full p-8 overflow-y-auto bg-[#0f1115]">
+            <h2 class="text-2xl font-bold mb-6 text-gray-100 border-b border-gray-800 pb-2 flex justify-between items-center">
+                📊 戰術系統儀表板
+                <span v-if="store.alerts.length > 0" class="text-sm bg-red-600 text-white px-4 py-1 rounded-full animate-pulse shadow-[0_0_15px_rgba(220,38,38,0.6)]">
+                    ⚠️ 發現入侵與異常事件
+                </span>
+            </h2>
+
+            <div class="mb-8">
+                <h3 class="text-lg font-bold text-[#00ffff] mb-4 flex items-center gap-2">
+                    <span class="w-2 h-2 bg-[#00ffff] rounded-full animate-ping"></span>
+                    即時設備連線與事件狀態
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                    <div v-for="dev in store.devices" :key="dev.device_id" 
+                         class="bg-gray-800 rounded-xl border p-5 shadow-lg relative overflow-hidden transition-colors"
+                         :class="store.alerts.includes(dev.device_id) ? 'border-red-500 shadow-[0_0_15px_rgba(220,38,38,0.2)]' : 'border-gray-700'">
+                        
+                        <div class="absolute top-0 left-0 w-full h-1" 
+                             :class="store.alerts.includes(dev.device_id) ? 'bg-red-500' : (store.telemetry[dev.device_id]?.battery < 20 ? 'bg-orange-500' : 'bg-[#00ffff]')"></div>
+                        
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h3 class="text-lg font-bold text-white">{{ dev.name }}</h3>
+                                <p class="text-xs text-gray-400 font-mono">{{ dev.device_id }}</p>
+                            </div>
+                            <div class="px-2 py-1 rounded text-xs font-bold border" 
+                                 :class="store.telemetry[dev.device_id]?.status === '錄影中' ? 'bg-red-900/30 text-red-400 border-red-800' : 'bg-[#00ffff]/10 text-[#00ffff] border-[#00ffff]/30'">
+                                {{ store.telemetry[dev.device_id]?.status || '待機/連線中' }}
+                            </div>
+                        </div>
+                        
+                        <div class="space-y-3 text-sm">
+                            <div class="flex justify-between border-b border-gray-700 pb-2">
+                                <span class="text-gray-400">設備電量</span>
+                                <span class="font-mono flex items-center gap-2 text-white">
+                                    <div class="w-16 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                        <div class="h-full" :class="store.telemetry[dev.device_id]?.battery < 20 ? 'bg-orange-500' : 'bg-[#00ffff]'" 
+                                             :style="\`width: \${store.telemetry[dev.device_id]?.battery || 0}%\`"></div>
+                                    </div>
+                                    <span :class="store.telemetry[dev.device_id]?.battery < 20 ? 'text-orange-400' : 'text-[#00ffff]'">{{ store.telemetry[dev.device_id]?.battery || 0 }}%</span>
+                                </span>
+                            </div>
+                            
+                            <div class="flex justify-between border-b border-gray-700 pb-2">
+                                <span class="text-gray-400">即時座標 (GPS)</span>
+                                <span class="font-mono" :class="store.alerts.includes(dev.device_id) ? 'text-red-400 font-bold' : 'text-gray-300'">
+                                    {{ store.telemetry[dev.device_id]?.lat?.toFixed(5) || '---' }}, 
+                                    {{ store.telemetry[dev.device_id]?.lng?.toFixed(5) || '---' }}
+                                </span>
+                            </div>
+
+                            <div class="flex justify-between border-b border-gray-700 pb-2">
+                                <span class="text-gray-400">SOS 警報狀態</span>
+                                <span class="font-mono font-bold" :class="store.telemetry[dev.device_id]?.sos ? 'text-red-500 animate-pulse' : 'text-gray-500'">
+                                    {{ store.telemetry[dev.device_id]?.sos ? '🚨 警報觸發' : '安全' }}
+                                </span>
+                            </div>
+                            <div class="flex justify-between border-b border-gray-700 pb-2">
+                                <span class="text-gray-400">Mark 案件標記</span>
+                                <span class="font-mono text-gray-300">
+                                    {{ store.telemetry[dev.device_id]?.mark || '無標記' }}
+                                </span>
+                            </div>
+                            <div class="flex justify-between pb-1">
+                                <span class="text-gray-400">配對心率帶 (HR)</span>
+                                <span class="font-mono flex items-center gap-1" :class="(store.telemetry[dev.device_id]?.hr || 0) > 130 ? 'text-red-400' : 'text-[#00ffff]'">
+                                    <span v-if="store.telemetry[dev.device_id]?.hr" class="animate-pulse">❤️</span> 
+                                    {{ store.telemetry[dev.device_id]?.hr ? store.telemetry[dev.device_id].hr + ' bpm' : '未配對' }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 rounded-xl border border-gray-700 shadow-xl overflow-hidden">
+                <div class="bg-gray-900 p-4 border-b border-gray-700 flex items-center gap-2">
+                    <span class="text-lg">🔍</span>
+                    <h3 class="text-lg font-bold text-[#00ffff]">歷史事件與影像調閱</h3>
+                </div>
+                
+                <div class="p-5 border-b border-gray-700 bg-gray-800/50 flex flex-wrap gap-4 items-end">
+                    <div class="flex-1 min-w-[200px]">
+                        <label class="block text-xs text-gray-400 mb-1">設備 ID</label>
+                        <select v-model="searchQuery.deviceId" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
+                            <option value="">-- 選擇設備 --</option>
+                            <option v-for="dev in store.devices" :key="dev.device_id" :value="dev.device_id">{{ dev.name }} ({{ dev.device_id }})</option>
+                        </select>
+                    </div>
+                    <div class="flex-1 min-w-[150px]">
+                        <label class="block text-xs text-gray-400 mb-1">事件類型</label>
+                        <select v-model="searchQuery.eventType" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
+                            <option value="ALL">全部事件</option>
+                            <option value="SOS">SOS 緊急警報</option>
+                            <option value="MARK">Mark 案件標記</option>
+                            <option value="HR_ALERT">心率異常警報</option>
+                        </select>
+                    </div>
+                    <div class="flex-1 min-w-[200px]">
+                        <label class="block text-xs text-gray-400 mb-1">開始時間</label>
+                        <input type="datetime-local" v-model="searchQuery.startTime" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
+                    </div>
+                    <div class="flex-1 min-w-[200px]">
+                        <label class="block text-xs text-gray-400 mb-1">結束時間</label>
+                        <input type="datetime-local" v-model="searchQuery.endTime" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
+                    </div>
+                    <button @click="executeSearch" class="bg-[#00ffff] hover:bg-[#00cccc] text-gray-900 px-6 py-2 rounded font-bold transition-colors shadow-[0_0_10px_rgba(0,255,255,0.4)] h-[42px]">
+                        搜尋
+                    </button>
+                </div>
+
+                <div class="p-0 overflow-x-auto">
+                    <table class="w-full text-left text-sm text-gray-300 whitespace-nowrap">
+                        <thead class="bg-gray-900 text-gray-400 border-b border-gray-700">
+                            <tr>
+                                <th class="p-4 font-medium">觸發時間</th>
+                                <th class="p-4 font-medium">設備 ID</th>
+                                <th class="p-4 font-medium">事件類型</th>
+                                <th class="p-4 font-medium">事件詳細資料</th>
+                                <th class="p-4 font-medium text-right">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="searchResults.length === 0" class="border-b border-gray-800">
+                                <td colspan="5" class="p-8 text-center text-gray-500">請設定條件並點擊搜尋以顯示歷史事件</td>
+                            </tr>
+                            <tr v-for="event in searchResults" :key="event.id" class="border-b border-gray-700 hover:bg-gray-750 transition-colors group">
+                                <td class="p-4 font-mono text-gray-300">{{ event.time }}</td>
+                                <td class="p-4 font-bold text-gray-200">{{ event.deviceId }}</td>
+                                <td class="p-4">
+                                    <span class="px-2 py-1 rounded text-xs font-bold"
+                                          :class="{
+                                              'bg-red-900/30 text-red-400 border border-red-800': event.type === 'SOS',
+                                              'bg-purple-900/30 text-purple-400 border border-purple-800': event.type === 'MARK',
+                                              'bg-orange-900/30 text-orange-400 border border-orange-800': event.type === 'HR_ALERT'
+                                          }">
+                                        {{ event.type }}
+                                    </span>
+                                </td>
+                                <td class="p-4 text-gray-400">{{ event.details }}</td>
+                                <td class="p-4 text-right">
+                                    <button @click="openPlayback(event)" class="opacity-70 group-hover:opacity-100 bg-purple-600 hover:bg-purple-500 text-white px-4 py-1.5 rounded text-xs font-bold transition-all shadow-lg flex items-center gap-2 ml-auto">
+                                        <span>▶</span> 影像回放
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `,
+    setup() {
+        const searchQuery = ref({
+            deviceId: '',
+            eventType: 'ALL',
+            startTime: '',
+            endTime: ''
+        });
+
+        const searchResults = ref([]);
+
+        // 模擬的搜尋行為：實務上這裡會把 searchQuery 的參數打給後端 QueryEvent.cgi API
+        const executeSearch = () => {
+            if (!searchQuery.value.deviceId) {
+                alert("請先選擇要搜尋的設備 ID！");
+                return;
+            }
+
+            // 產生模擬的假資料供介面展示
+            searchResults.value = [
+                { id: 1, time: '2026-03-18 14:32:15', deviceId: searchQuery.value.deviceId, type: 'SOS', details: '警員長按 SOS 鍵觸發緊急求救' },
+                { id: 2, time: '2026-03-18 11:20:05', deviceId: searchQuery.value.deviceId, type: 'MARK', details: '標記重點：發現可疑違停車輛 (車牌: ABC-1234)' },
+                { id: 3, time: '2026-03-18 09:45:00', deviceId: searchQuery.value.deviceId, type: 'HR_ALERT', details: '配對心率帶異常，心率突增至 165 bpm' },
+                { id: 4, time: '2026-03-17 22:15:30', deviceId: searchQuery.value.deviceId, type: 'MARK', details: '標記重點：夜間臨檢紀錄' }
+            ];
+
+            // 根據事件類型進行簡單的前端過濾
+            if (searchQuery.value.eventType !== 'ALL') {
+                searchResults.value = searchResults.value.filter(e => e.type === searchQuery.value.eventType);
+            }
+        };
+
+        const openPlayback = (event) => {
+            // 實務上這裡會將欲播放的 deviceId 與 time 傳遞給 PlaybackTab，
+            // 這裡用 alert 示意動作，您可以在主架構中實作 Tab 切換。
+            alert(`即將為您跳轉至【整合回放模組】\n調閱設備: ${event.deviceId}\n時間點: ${event.time}`);
+        };
+
+        return { store, searchQuery, searchResults, executeSearch, openPlayback };
+    }
+};

@@ -1,0 +1,438 @@
+// js/PttTab.js
+import { ref, onMounted, onUnmounted, nextTick } from 'vue';
+import { store } from './store.js';
+
+export default {
+    template: `
+        <div class="w-full h-full flex bg-[#0f1115]">
+            <div class="w-80 bg-gray-800 border-r border-gray-700 flex flex-col z-10 shadow-xl">
+                <div class="p-3 bg-gray-900 border-b border-gray-800 flex justify-between items-center text-xs">
+                    <span class="text-gray-500 font-bold tracking-wider">COMMUNICATION LINK</span>
+                    <span class="flex items-center gap-2" :class="isMqttConnected ? 'text-green-400' : 'text-red-500'">
+                        <span class="h-2 w-2 rounded-full" :class="isMqttConnected ? 'bg-green-500' : 'bg-red-500'"></span>
+                        {{ isMqttConnected ? 'ONLINE' : 'OFFLINE' }}
+                    </span>
+                </div>
+
+                <div class="p-4 flex-1 overflow-y-auto">
+                    <h3 class="text-sm font-bold text-gray-300 mb-3 flex items-center gap-2">
+                        <span>🎯 戰術遠端監聽</span>
+                    </h3>
+                    
+                    <div class="bg-gray-900 p-4 rounded-xl border mb-6 transition-all duration-300"
+                         :class="isPrivateCalling ? 'border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'border-gray-700'">
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="text-sm font-mono font-bold" :class="isPrivateCalling ? 'text-red-400' : 'text-gray-400'">
+                                ID: {{ targetDevice }}
+                            </span>
+                            <span v-if="isPrivateCalling" class="text-[10px] bg-red-900/50 text-red-400 px-2 py-0.5 rounded animate-pulse">監聽中</span>
+                        </div>
+                        
+                        <button @click="toggleRemoteListen" 
+                                :disabled="!isMqttConnected"
+                                :class="[
+                                    !isMqttConnected ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 
+                                    isPrivateCalling ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-purple-600 hover:bg-purple-500 text-white'
+                                ]" 
+                                class="w-full py-2 rounded font-bold transition-colors flex items-center justify-center gap-2">
+                            <span v-if="isPrivateCalling">⏹ 停止監聽</span>
+                            <span v-else>🎧 啟動遠端監聽</span>
+                        </button>
+                    </div>
+
+                    <h3 class="text-sm font-bold text-gray-300 mb-3 border-b border-gray-700 pb-2">📡 一般廣播群組</h3>
+                    <div v-for="i in 5" :key="i" @click="activeGroup = i" 
+                         :class="activeGroup === i ? 'bg-blue-900 border-blue-500' : 'bg-gray-900 border-gray-700 hover:border-blue-400'" 
+                         class="mb-2 p-3 rounded border cursor-pointer flex justify-between items-center transition-colors">
+                        <span class="text-sm font-bold text-gray-200">CHANNEL{{ String(i).padStart(4, '0') }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 flex flex-col items-center justify-center relative border-r border-gray-800 bg-[#0f1115]">
+                
+                <div v-if="isPrivateCalling" class="absolute top-10 flex flex-col items-center bg-red-900/30 border border-red-500/50 p-6 rounded-2xl shadow-[0_0_30px_rgba(239,68,68,0.2)] z-10 backdrop-blur-md">
+                    <span class="text-red-400 font-bold mb-2 animate-pulse">⚠️ 收到私人語音通話 (Private Call)</span>
+                    <span class="text-white text-lg font-mono mb-1">來源設備: {{ targetDevice }}</span>
+                    <span class="text-xs text-gray-400 font-mono">交握 Topic: {{ currentPrivateTopic }}</span>
+                    <div class="mt-4 flex items-center gap-3">
+                        <div class="flex gap-1">
+                            <div class="w-1.5 h-4 bg-green-500 rounded-full animate-[bounce_1s_infinite]"></div>
+                            <div class="w-1.5 h-6 bg-green-500 rounded-full animate-[bounce_1s_infinite_0.2s]"></div>
+                            <div class="w-1.5 h-3 bg-green-500 rounded-full animate-[bounce_1s_infinite_0.4s]"></div>
+                            <div class="w-1.5 h-5 bg-green-500 rounded-full animate-[bounce_1s_infinite_0.1s]"></div>
+                        </div>
+                        <span class="text-xs text-green-400 font-bold tracking-widest">AUDIO STREAMING...</span>
+                    </div>
+                </div>
+
+                <div class="absolute top-8 right-8 flex items-center gap-3 bg-gray-900 px-4 py-2 rounded-full border border-gray-700">
+                    <span class="text-xs font-bold" :class="sttEnabled ? 'text-blue-400' : 'text-gray-500'">本機 AI STT (發話用)</span>
+                    <button @click="sttEnabled = !sttEnabled" :class="sttEnabled ? 'bg-blue-600' : 'bg-gray-600'" class="w-10 h-5 rounded-full relative transition-colors duration-300">
+                        <div :class="sttEnabled ? 'translate-x-5' : 'translate-x-0'" class="w-5 h-5 bg-white rounded-full shadow transform transition-transform duration-300"></div>
+                    </button>
+                </div>
+
+                <div @mousedown="startTalking" @mouseup="stopTalking" @mouseleave="stopTalking" 
+                     :class="[
+                        isTalking ? 'bg-green-700 border-green-500 scale-110 shadow-[0_0_80px_rgba(34,197,94,0.6)]' : 'bg-gray-800 border-gray-600 hover:border-blue-500',
+                        isPrivateCalling ? 'opacity-30 pointer-events-none grayscale' : ''
+                     ]" 
+                     class="w-72 h-72 rounded-full border-4 flex flex-col items-center justify-center cursor-pointer transition-all duration-200 select-none">
+                    <div class="text-6xl mb-4">🎙️</div>
+                    <div class="text-xl font-bold text-white mb-2">群組 {{ activeGroup }}</div>
+                    <div class="text-sm font-bold" :class="isTalking ? 'text-white' : 'text-gray-400'">
+                        {{ isTalking ? '發話錄音中...' : (isPrivateCalling ? '遠端監聽中 (鎖定本機麥克風)' : '按住滑鼠發話 (PTT)') }}
+                    </div>
+                </div>
+            </div>
+
+            <div class="w-[450px] bg-gray-900 flex flex-col">
+                <div class="flex border-b border-gray-700 bg-gray-800">
+                    <button @click="panelTab = 'live'" :class="panelTab === 'live' ? 'text-blue-400 border-b-2 border-blue-500 bg-gray-900' : 'text-gray-400 hover:text-white'" class="flex-1 py-3 text-sm font-bold transition-colors">即時通訊 (Live)</button>
+                    <button @click="panelTab = 'history'" :class="panelTab === 'history' ? 'text-blue-400 border-b-2 border-blue-500 bg-gray-900' : 'text-gray-400 hover:text-white'" class="flex-1 py-3 text-sm font-bold transition-colors">語音檔案查詢</button>
+                </div>
+                
+                <div v-show="panelTab === 'live'" class="flex-1 overflow-y-auto p-4 space-y-3" id="liveBox">
+                    <div v-for="(msg, index) in liveLog" :key="index" class="bg-gray-800 p-3 rounded-lg border border-gray-700 relative overflow-hidden">
+                        <div v-if="msg.isPrivate" class="absolute top-0 left-0 w-1 h-full bg-red-500"></div>
+                        <div v-else class="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                        
+                        <div class="flex justify-between text-[10px] text-gray-400 mb-1 pl-2">
+                            <span class="font-bold" :class="msg.isPrivate ? 'text-red-400' : 'text-blue-300'">
+                                {{ msg.sender }} <span v-if="msg.isPrivate" class="bg-red-900/50 px-1 rounded text-[8px] ml-1">Private Call</span>
+                            </span>
+                            <span>{{ msg.time }}</span>
+                        </div>
+                        <div class="text-sm text-gray-100 pl-2 leading-relaxed">{{ msg.text }}</div>
+                        <audio v-if="msg.audio_url" :src="msg.audio_url" controls class="w-full h-8 mt-2 opacity-80 outline-none"></audio>
+                    </div>
+
+                    <div v-if="(isTalking || isPrivateCalling) && interimText" class="bg-blue-900/30 p-3 rounded-lg border border-blue-500/50 pl-3">
+                        <div class="text-[10px] text-blue-400 font-bold mb-1">AI STT 辨識中...</div>
+                        <div class="text-sm text-gray-100 animate-pulse">{{ interimText }}</div>
+                    </div>
+                </div>
+
+                <div v-show="panelTab === 'history'" class="flex-1 overflow-y-auto p-4 bg-[#0f1115]">
+                    <div class="flex gap-2 mb-4">
+                        <input v-model="searchQuery" type="text" placeholder="輸入 Device ID 搜尋" class="flex-1 bg-gray-800 border border-gray-700 rounded px-2 text-xs text-white outline-none">
+                        <button @click="fetchHistory" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1 rounded">查詢</button>
+                    </div>
+
+                    <div v-if="historyRecords.length === 0" class="text-center text-gray-500 text-sm mt-10">尚無歷史語音紀錄</div>
+
+                    <div v-for="rec in historyRecords" :key="rec.id" class="bg-gray-800 p-3 rounded-lg border border-gray-700 mb-3 relative overflow-hidden">
+                        <div :class="rec.sender === targetDevice ? 'bg-red-500' : 'bg-blue-500'" class="absolute top-0 left-0 w-1 h-full"></div>
+                        <div class="flex justify-between text-[10px] text-gray-400 mb-2 border-b border-gray-700 pb-1 pl-2">
+                            <span class="font-bold" :class="rec.sender === targetDevice ? 'text-red-400' : 'text-green-400'">{{ rec.sender }}</span>
+                            <span>{{ rec.timestamp }}</span>
+                        </div>
+                        <div class="text-sm text-gray-100 mb-2 pl-2 leading-relaxed">{{ rec.text || '（無辨識文字）' }}</div>
+                        <audio :src="rec.audio_url" controls class="w-full h-8 outline-none ml-2 w-[calc(100%-8px)]"></audio>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `,
+    setup() {
+        // ================= MQTT 隱藏設定 =================
+        // 注意：Browser 只能使用 WebSocket，所以我們將通訊埠寫死為 WS 的 8083。
+        // 請確保您的 118.163.141.80 主機上的 Broker 有開啟 8083 的 WebSocket 支援。
+        const MQTT_IP = '118.163.141.80';
+        const MQTT_WS_PORT = '8083'; 
+        const channelPrefix = '/WJI/PTT/CHANNEL0001';
+        
+        // 目標設備設定 (直接寫死如需求)
+        const targetDevice = ref('688FC98F0961'); 
+        
+        let mqttClient = null;
+        const isMqttConnected = ref(false);
+
+        const activeGroup = ref(1);
+        const panelTab = ref('live'); 
+        const searchQuery = ref('');
+        
+        // ================= 私人通話狀態 (Private Call) =================
+        const isPrivateCalling = ref(false);
+        const currentPrivateTopic = ref('');
+        let audioContext = null;
+        let incomingAudioChunks = []; 
+        let mockSttInterval = null;
+
+        // 本機發話狀態
+        const isTalking = ref(false);
+        const sttEnabled = ref(true);
+        const liveLog = ref([]);
+        const interimText = ref('');
+        const historyRecords = ref([]);
+
+        let recognition = null;
+        let mediaRecorder = null;
+        let localAudioChunks = [];
+        let finalTranscripts = '';
+
+        // ================= 1. 背景自動連線 MQTT =================
+        const loadMqttScript = () => {
+            return new Promise((resolve) => {
+                if (window.mqtt) return resolve();
+                const script = document.createElement('script');
+                script.src = "https://unpkg.com/mqtt/dist/mqtt.min.js";
+                script.onload = resolve;
+                document.head.appendChild(script);
+            });
+        };
+
+        const autoConnectMqtt = async () => {
+            await loadMqttScript();
+            
+            const brokerUrl = `ws://${MQTT_IP}:${MQTT_WS_PORT}/mqtt`;
+            
+            try {
+                mqttClient = window.mqtt.connect(brokerUrl, {
+                    reconnectPeriod: 5000, // 斷線自動重連
+                });
+                
+                mqttClient.on('connect', () => {
+                    isMqttConnected.value = true;
+                    console.log("[MQTT] Connected to Broker automatically.");
+                    // 訂閱廣播頻道準備接收交握訊息
+                    mqttClient.subscribe(`${channelPrefix}/CHANNEL_ANNOUNCE`);
+                });
+
+                mqttClient.on('message', (topic, message) => {
+                    handleMqttMessage(topic, message);
+                });
+
+                mqttClient.on('error', (err) => {
+                    console.error("[MQTT] Connection Error:", err);
+                });
+
+                mqttClient.on('close', () => {
+                    isMqttConnected.value = false;
+                });
+
+            } catch(e) { console.error("MQTT 初始化失敗", e); }
+        };
+
+        // ================= 2. 遠端監聽核心邏輯 (私人通話流程) =================
+        // 調度員主動點擊「啟動遠端監聽」
+        const toggleRemoteListen = () => {
+            if (!isMqttConnected.value) return alert("MQTT 尚未連線！");
+
+            if (isPrivateCalling.value) {
+                // 如果正在監聽，則主動發送終止訊號並結束
+                sendPrivateStop();
+                stopPrivateCallReceive();
+            } else {
+                // 產生一個隨機的臨時房間 ID
+                const randomRoomId = 'Room-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+                
+                // 發送交握請求給目標設備：Tag,TargetUUID,PrivateTopicID
+                const payload = `PRIVATE_SPK_REQ,${targetDevice.value},${randomRoomId}`;
+                mqttClient.publish(`${channelPrefix}/CHANNEL_ANNOUNCE`, payload);
+                console.log("[MQTT] Published Private Request:", payload);
+
+                // 立即啟動前端的接收與解碼準備
+                startPrivateCallReceive(randomRoomId);
+            }
+        };
+
+        // 發送結束通話訊號
+        const sendPrivateStop = () => {
+            if (mqttClient && isMqttConnected.value) {
+                const payload = `PRIVATE_SPK_STOP,${targetDevice.value}`;
+                mqttClient.publish(`${channelPrefix}/CHANNEL_ANNOUNCE`, payload);
+                console.log("[MQTT] Published Private Stop:", payload);
+            }
+        };
+
+        // 處理接收到的 MQTT 訊息
+        const handleMqttMessage = (topic, message) => {
+            // 被動接收設備發起的交握請求
+            if (topic === `${channelPrefix}/CHANNEL_ANNOUNCE`) {
+                const payload = message.toString();
+                
+                if (payload.includes('PRIVATE_SPK_REQ') && payload.includes(targetDevice.value)) {
+                    const parts = payload.split(',');
+                    if (parts.length >= 3 && !isPrivateCalling.value) {
+                        const newTopicId = parts[2].trim();
+                        startPrivateCallReceive(newTopicId);
+                    }
+                }
+                else if (payload.includes('PRIVATE_SPK_STOP') && payload.includes(targetDevice.value)) {
+                    stopPrivateCallReceive();
+                }
+            }
+            
+            // 處理語音音訊傳輸
+            if (isPrivateCalling.value && topic === `${channelPrefix}/PRIVATE/${currentPrivateTopic.value}`) {
+                playIncomingAudio(message);
+                incomingAudioChunks.push(message); 
+            }
+        };
+
+        // 啟動前端的監聽狀態
+        const startPrivateCallReceive = (topicId) => {
+            isPrivateCalling.value = true;
+            currentPrivateTopic.value = topicId;
+            incomingAudioChunks = [];
+            interimText.value = '';
+            
+            // 訂閱雙方約定好的語音頻道
+            mqttClient.subscribe(`${channelPrefix}/PRIVATE/${topicId}`);
+            
+            // 喚醒 AudioContext
+            if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioContext.state === 'suspended') audioContext.resume();
+
+            // UI STT 模擬動畫
+            let dotCount = 0;
+            mockSttInterval = setInterval(() => {
+                dotCount++;
+                interimText.value = `[來自 ${targetDevice.value}] AI 遠端訊號解析轉譯中` + '.'.repeat(dotCount % 4);
+            }, 500);
+        };
+
+        // 結束前端的監聽狀態
+        const stopPrivateCallReceive = async () => {
+            if (!isPrivateCalling.value) return;
+            
+            // 停止訂閱並清理狀態
+            mqttClient.unsubscribe(`${channelPrefix}/PRIVATE/${currentPrivateTopic.value}`);
+            isPrivateCalling.value = false;
+            clearInterval(mockSttInterval);
+            
+            const finalMockText = `【設備回報】這是一段來自 ${targetDevice.value} 的遠端私人通話擷取紀錄。系統已將 Raw Data 進行轉譯存檔。`;
+            interimText.value = '';
+
+            const audioBlob = new Blob(incomingAudioChunks, { type: 'application/octet-stream' });
+            await uploadRecord(audioBlob, finalMockText, targetDevice.value, true);
+        };
+
+        const playIncomingAudio = (buffer) => {
+            // 極度簡化的 PCM 播放器防呆
+            if (!audioContext) return;
+            try {
+                // Browser Decode Logic Here (G711/PCM)
+            } catch (e) { }
+        };
+
+        // ================= 3. 本機發話 (錄音與 STT) 保留不變 =================
+        const initLocalAudioSystem = async () => {
+            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                recognition = new SpeechRecognition();
+                recognition.continuous = true;      
+                recognition.interimResults = true;  
+                recognition.lang = 'zh-TW';         
+
+                recognition.onresult = (event) => {
+                    interimText.value = '';
+                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                        if (event.results[i].isFinal) finalTranscripts += event.results[i][0].transcript;
+                        else interimText.value += event.results[i][0].transcript;
+                    }
+                };
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) localAudioChunks.push(e.data); };
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(localAudioChunks, { type: 'audio/webm' });
+                    localAudioChunks = []; 
+                    const textToSave = finalTranscripts || interimText.value || '（未說話）';
+                    await uploadRecord(audioBlob, textToSave, store.currentUser ? store.currentUser.username : '調度中心', false);
+                    finalTranscripts = ''; 
+                    interimText.value = '';
+                };
+            } catch (err) {}
+        };
+
+        const startTalking = () => {
+            if (isPrivateCalling.value || !mediaRecorder) return;
+            isTalking.value = true;
+            finalTranscripts = ''; interimText.value = '';
+            mediaRecorder.start();
+            if (sttEnabled.value && recognition) { try { recognition.start(); } catch(e){} }
+        };
+
+        const stopTalking = () => {
+            if (!isTalking.value) return; 
+            isTalking.value = false;
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+            if (recognition) recognition.stop();
+        };
+
+        // ================= 4. 共用上傳與歷史查詢 =================
+        const uploadRecord = async (audioBlob, text, senderName, isPrivate) => {
+            const formData = new FormData();
+            formData.append('group_id', activeGroup.value);
+            formData.append('sender', senderName);
+            formData.append('text', text);
+            formData.append('audio', audioBlob, isPrivate ? 'remote_audio.raw' : 'local_record.webm');
+
+            try {
+                const res = await fetch('http://localhost:5555/api/ptt/records', {
+                    method: 'POST', body: formData
+                });
+                
+                if (res.ok) {
+                    fetchHistory();
+                    liveLog.value.push({
+                        time: new Date().toLocaleTimeString('zh-TW', { hour12: false }),
+                        sender: senderName,
+                        text: text,
+                        audio_url: URL.createObjectURL(audioBlob),
+                        isPrivate: isPrivate
+                    });
+                    scrollToBottom();
+                }
+            } catch (e) { console.error("上傳失敗", e); }
+        };
+
+        const fetchHistory = async () => {
+            try {
+                const url = searchQuery.value 
+                    ? `http://localhost:5555/api/ptt/records` 
+                    : `http://localhost:5555/api/ptt/records?group_id=${activeGroup.value}`;
+                    
+                const res = await fetch(url);
+                const data = await res.json();
+                
+                if (searchQuery.value) {
+                    historyRecords.value = data.filter(r => r.sender.includes(searchQuery.value));
+                } else {
+                    historyRecords.value = data;
+                }
+            } catch (e) { console.error("撈取紀錄失敗", e); }
+        };
+
+        const scrollToBottom = async () => {
+            await nextTick();
+            const box = document.getElementById('liveBox');
+            if (box) box.scrollTop = box.scrollHeight;
+        };
+
+        onMounted(() => {
+            autoConnectMqtt(); // 背景自動連線
+            initLocalAudioSystem();
+            fetchHistory();
+        });
+
+        onUnmounted(() => {
+            if (recognition) recognition.stop();
+            if (mqttClient) mqttClient.end();
+            if (audioContext) audioContext.close();
+        });
+
+        return { 
+            activeGroup, isTalking, sttEnabled, panelTab, searchQuery,
+            liveLog, interimText, historyRecords,
+            isMqttConnected, targetDevice, isPrivateCalling, currentPrivateTopic,
+            startTalking, stopTalking, fetchHistory, toggleRemoteListen 
+        };
+    }
+};

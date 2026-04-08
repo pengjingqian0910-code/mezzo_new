@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WiB EOC 緊急調度指揮系統</title>
+    <script type="importmap">{"imports": {"vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js"}}</script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.107/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.107/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            background-color: #0f1115;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', sans-serif;
+            overflow: hidden;
+        }
+
+        .cesium-viewer-bottom,
+        .cesium-viewer-toolbar {
+            display: none !important;
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body class="h-screen w-screen flex">
+    <div id="app" class="flex w-full h-full">
+
+        <div v-if="!store.currentUser"
+            class="w-full h-full flex items-center justify-center bg-[#0f1115] absolute z-[100]">
+            <div
+                class="bg-gray-900 p-8 rounded-xl border border-gray-800 shadow-2xl w-96 relative overflow-hidden flex flex-col items-center">
+                <img src="./WiB.png" alt="WiB Logo" class="w-48 h-auto object-contain mb-6 drop-shadow-xl">
+                <p class="text-gray-500 text-sm text-center mb-6">{{ isRegisterMode ? '建立您的調度員帳號' : 'EOC 緊急調度指揮系統' }}
+                </p>
+
+                <form v-if="!isRegisterMode" @submit.prevent="handleLogin" class="space-y-4 w-full">
+                    <input v-model="authForm.username" type="text" placeholder="帳號" required
+                        class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-purple-500 transition-colors">
+                    <input v-model="authForm.password" type="password" placeholder="密碼" required
+                        class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-purple-500 transition-colors">
+                    <div v-if="authError" class="text-red-500 text-xs text-center">{{ authError }}</div>
+                    <button type="submit"
+                        class="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 rounded transition-colors">登入系統</button>
+                    <div class="text-center mt-4">
+                        <a @click="isRegisterMode = true; authError = ''"
+                            class="text-xs text-gray-400 hover:text-purple-400 cursor-pointer transition-colors">沒有帳號？立即註冊</a>
+                    </div>
+                </form>
+
+                <form v-else @submit.prevent="handleRegister" class="space-y-4 w-full">
+                    <input v-model="authForm.username" type="text" placeholder="設定登入帳號" required
+                        class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-purple-500 transition-colors">
+                    <input v-model="authForm.email" type="email" placeholder="電子郵件信箱" required
+                        class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-purple-500 transition-colors">
+                    <input v-model="authForm.password" type="password" placeholder="設定密碼" required
+                        class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-purple-500 transition-colors">
+                    <div v-if="authError" class="text-red-500 text-xs text-center">{{ authError }}</div>
+                    <button type="submit"
+                        class="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-2 rounded transition-colors">完成註冊</button>
+                    <div class="text-center mt-4">
+                        <a @click="isRegisterMode = false; authError = ''"
+                            class="text-xs text-gray-400 hover:text-purple-400 cursor-pointer transition-colors">返回登入</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Operator 自助綁定 Device ID 彈窗 -->
+        <div v-if="showBindPrompt" class="fixed inset-0 bg-black/70 flex items-center justify-center z-[200]">
+            <div class="bg-gray-900 border border-purple-500 rounded-xl p-8 w-96 shadow-2xl">
+                <h2 class="text-lg font-bold text-purple-400 mb-2">🔗 綁定您的設備</h2>
+                <p class="text-xs text-gray-400 mb-4">請輸入您執法儀的 Device ID，系統將自動與您的帳號連結。</p>
+                <input v-model="bindDeviceId" type="text" placeholder="Device ID（例：688FC9D99DDB）"
+                    class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-purple-500 mb-2 font-mono text-sm">
+                <div v-if="bindError" class="text-red-400 text-xs mb-2">{{ bindError }}</div>
+                <button @click="handleSelfBind"
+                    class="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 rounded transition-colors">確認綁定</button>
+                <button @click="showBindPrompt = false"
+                    class="w-full mt-2 text-gray-500 hover:text-gray-300 text-xs py-1">稍後再綁定</button>
+            </div>
+        </div>
+
+        <template v-else>
+            <div class="w-64 bg-gray-900 border-r border-gray-800 flex flex-col z-50 shadow-xl">
+                <div class="p-6 border-b border-gray-800 flex flex-col items-start w-full">
+                    <img src="./WiB.png" alt="WiB Logo"
+                        class="w-full h-auto max-h-20 object-contain object-left mb-3 drop-shadow-md">
+                    <p class="text-xs text-green-400 mt-1 font-bold">在線: {{ store.currentUser.username }}</p>
+                </div>
+                <nav class="flex-1 p-4 space-y-2 overflow-y-auto">
+                    <button @click="currentTab = 'MapTab'"
+                        :class="currentTab === 'MapTab' ? 'bg-gray-800 text-purple-400 border-purple-500' : 'text-gray-400 hover:bg-gray-800 border-transparent'"
+                        class="w-full text-left px-4 py-3 rounded border-l-4 font-medium transition-colors">🌍
+                        電子地圖</button>
+                    <button @click="currentTab = 'GeofenceTab'"
+                        :class="currentTab === 'GeofenceTab' ? 'bg-gray-800 text-purple-400 border-purple-500' : 'text-gray-400 hover:bg-gray-800 border-transparent'"
+                        class="w-full text-left px-4 py-3 rounded border-l-4 font-medium transition-colors">🛡️
+                        警戒區設定</button>
+                    <button @click="currentTab = 'DashboardTab'"
+                        :class="currentTab === 'DashboardTab' ? 'bg-gray-800 text-purple-400 border-purple-500' : 'text-gray-400 hover:bg-gray-800 border-transparent'"
+                        class="w-full text-left px-4 py-3 rounded border-l-4 font-medium transition-colors">📊
+                        狀態總覽</button>
+                    <button @click="currentTab = 'GridTab'"
+                        :class="currentTab === 'GridTab' ? 'bg-gray-800 text-purple-400 border-purple-500' : 'text-gray-400 hover:bg-gray-800 border-transparent'"
+                        class="w-full text-left px-4 py-3 rounded border-l-4 font-medium transition-colors">🎦
+                        影像監控</button>
+                    <button @click="currentTab = 'PlaybackTab'"
+                        :class="currentTab === 'PlaybackTab' ? 'bg-gray-800 text-purple-400 border-purple-500' : 'text-gray-400 hover:bg-gray-800 border-transparent'"
+                        class="w-full text-left px-4 py-3 rounded border-l-4 font-medium transition-colors">🗺️
+                        軌跡與影像回放</button>
+                    <button @click="currentTab = 'PttTab'"
+                        :class="currentTab === 'PttTab' ? 'bg-gray-800 text-purple-400 border-purple-500' : 'text-gray-400 hover:bg-gray-800 border-transparent'"
+                        class="w-full text-left px-4 py-3 rounded border-l-4 font-medium transition-colors">🎙️ PTT
+                        語音對講</button>
+                    <button @click="currentTab = 'AdminTab'"
+                        :class="currentTab === 'AdminTab' ? 'bg-gray-800 text-purple-400 border-purple-500' : 'text-gray-400 hover:bg-gray-800 border-transparent'"
+                        class="w-full text-left px-4 py-3 rounded border-l-4 font-medium transition-colors">⚙️
+                        後台與個人設定</button>
+                </nav>
+                <div class="p-4 border-t border-gray-800">
+                    <button @click="logout"
+                        class="w-full text-gray-500 hover:text-red-400 text-sm font-bold transition-colors">登出系統</button>
+                </div>
+            </div>
+
+            <div class="flex-1 relative bg-[#0f1115]">
+                <KeepAlive>
+                    <component :is="currentTab"></component>
+                </KeepAlive>
+            </div>
+        </template>
+    </div>
+
+    <script type="module">
+        import { createApp, ref } from 'vue';
+        import { store } from './js/store.js';
+        import MapTab from './js/MapTab.js';
+        import DashboardTab from './js/DashboardTab.js';
+        import GeofenceTab from './js/GeofenceTab.js';
+        import GridTab from './js/GridTab.js';
+        import PttTab from './js/PttTab.js';
+        import AdminTab from './js/AdminTab.js';
+        // 匯入新的 PlaybackTab 模組
+        import PlaybackTab from './js/PlaybackTab.js';
+
+        createApp({
+            // 註冊 PlaybackTab
+            components: { MapTab, DashboardTab, GeofenceTab, GridTab, PttTab, AdminTab, PlaybackTab },
+            setup() {
+                const currentTab = ref('MapTab');
+                const isRegisterMode = ref(false);
+                const authForm = ref({ username: 'admin', password: 'admin', email: '' });
+                const authError = ref('');
+
+                // ---- Operator 自助綁定 ----
+                const showBindPrompt = ref(false);
+                const bindDeviceId   = ref('');
+                const bindError      = ref('');
+
+                const handleLogin = async () => {
+                    try {
+                        const res = await fetch('/api/login', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(authForm.value)
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            // 存 token 供後續 API 使用
+                            localStorage.setItem('mezzo_token', data.token);
+                            store.currentUser = { username: data.username, role: data.role, token: data.token };
+                            authError.value = '';
+
+                            await store.fetchDevices();
+                            store.fetchGeofences();
+                            store.connectWebSocket();
+
+                            // Operator 且尚未綁定設備 → 顯示自助綁定提示
+                            if (data.role === 'operator' && store.devices.length === 0) {
+                                showBindPrompt.value = true;
+                            }
+                        } else { authError.value = "帳密錯誤"; }
+                    } catch (e) { authError.value = "伺服器連線失敗"; }
+                };
+
+                const handleSelfBind = async () => {
+                    if (!bindDeviceId.value.trim()) { bindError.value = '請輸入 Device ID'; return; }
+                    try {
+                        const res = await fetch('/api/me/bind_device', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${store.currentUser.token}` },
+                            body: JSON.stringify({ device_id: bindDeviceId.value.trim() })
+                        });
+                        if (res.ok) {
+                            showBindPrompt.value = false;
+                            await store.fetchDevices();
+                        } else {
+                            const err = await res.json();
+                            bindError.value = err.detail || '綁定失敗';
+                        }
+                    } catch (e) { bindError.value = '連線失敗'; }
+                };
+
+                const handleRegister = async () => {
+                    try {
+                        const res = await fetch('/api/register', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(authForm.value)
+                        });
+                        if (res.ok) {
+                            alert("註冊成功！請使用新帳號登入。");
+                            isRegisterMode.value = false;
+                            authForm.value.password = '';
+                        } else {
+                            const errorData = await res.json();
+                            authError.value = errorData.detail || "註冊失敗";
+                        }
+                    } catch (e) { authError.value = "伺服器連線失敗"; }
+                };
+
+                const logout = async () => {
+                    const token = localStorage.getItem('mezzo_token');
+                    if (token) {
+                        fetch('/api/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+                        localStorage.removeItem('mezzo_token');
+                    }
+                    store.currentUser = null;
+                    authForm.value.password = '';
+                    window.location.reload();
+                };
+
+                return { store, currentTab, isRegisterMode, authForm, authError,
+                         showBindPrompt, bindDeviceId, bindError,
+                         handleLogin, handleRegister, handleSelfBind, logout };
+            }
+        }).mount('#app');
+    </script>
+</body>
+
+</html>
