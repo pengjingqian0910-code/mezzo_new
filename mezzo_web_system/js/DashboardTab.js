@@ -171,32 +171,23 @@ export default {
 
                     <div class="p-5 border-b border-gray-700 bg-gray-800/50 flex flex-wrap gap-4 items-end">
                         <div class="flex-1 min-w-[200px]">
-                            <label class="block text-xs text-gray-400 mb-1">設備 ID</label>
-                            <select v-model="searchQuery.deviceId" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
-                                <option value="">-- 選擇設備 --</option>
-                                <option v-for="dev in store.devices" :key="dev.device_id" :value="dev.device_id">{{ dev.name }} ({{ dev.device_id }})</option>
-                            </select>
-                        </div>
-                        <div class="flex-1 min-w-[150px]">
-                            <label class="block text-xs text-gray-400 mb-1">事件類型</label>
-                            <select v-model="searchQuery.eventType" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
-                                <option value="ALL">全部事件</option>
-                                <option value="SOS">SOS 緊急警報</option>
-                                <option value="MARK">Mark 案件標記</option>
-                                <option value="HR_ALERT">心率異常警報</option>
-                            </select>
-                        </div>
-                        <div class="flex-1 min-w-[200px]">
-                            <label class="block text-xs text-gray-400 mb-1">開始時間</label>
-                            <input type="datetime-local" v-model="searchQuery.startTime" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
+                            <label class="block text-xs text-gray-400 mb-1">起始時間</label>
+                            <input type="datetime-local" v-model="searchQuery.startTime"
+                                   class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
                         </div>
                         <div class="flex-1 min-w-[200px]">
                             <label class="block text-xs text-gray-400 mb-1">結束時間</label>
-                            <input type="datetime-local" v-model="searchQuery.endTime" class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
+                            <input type="datetime-local" v-model="searchQuery.endTime"
+                                   class="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
                         </div>
-                        <button @click="executeSearch" class="bg-[#00ffff] hover:bg-[#00cccc] text-gray-900 px-6 py-2 rounded font-bold transition-colors shadow-[0_0_10px_rgba(0,255,255,0.4)] h-[42px]">
-                            搜尋
+                        <button @click="executeSearch" :disabled="searchLoading || !searchQuery.startTime || !searchQuery.endTime"
+                                class="bg-[#00ffff] hover:bg-[#00cccc] disabled:bg-gray-600 disabled:text-gray-400 text-gray-900 px-6 py-2 rounded font-bold transition-colors shadow-[0_0_10px_rgba(0,255,255,0.4)] h-[42px]">
+                            {{ searchLoading ? '查詢中...' : '搜尋' }}
                         </button>
+                    </div>
+
+                    <div v-if="searchError" class="px-5 py-3 bg-red-900/30 border-b border-red-800 text-red-400 text-sm">
+                        {{ searchError }}
                     </div>
 
                     <div class="p-0 overflow-x-auto">
@@ -204,35 +195,26 @@ export default {
                             <thead class="bg-gray-900 text-gray-400 border-b border-gray-700">
                                 <tr>
                                     <th class="p-4 font-medium">觸發時間</th>
-                                    <th class="p-4 font-medium">設備 ID</th>
                                     <th class="p-4 font-medium">事件類型</th>
-                                    <th class="p-4 font-medium">事件詳細資料</th>
-                                    <th class="p-4 font-medium text-right">操作</th>
+                                    <th class="p-4 font-medium">事件描述</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-if="searchResults.length === 0" class="border-b border-gray-800">
-                                    <td colspan="5" class="p-8 text-center text-gray-500">請設定條件並點擊搜尋以顯示歷史事件</td>
+                                <tr v-if="searchLoading" class="border-b border-gray-800">
+                                    <td colspan="3" class="p-8 text-center text-gray-500 animate-pulse">查詢 NVR 中...</td>
                                 </tr>
-                                <tr v-for="event in searchResults" :key="event.id" class="border-b border-gray-700 hover:bg-gray-750 transition-colors group">
+                                <tr v-else-if="searchResults.length === 0" class="border-b border-gray-800">
+                                    <td colspan="3" class="p-8 text-center text-gray-500">請輸入時間範圍後點擊搜尋</td>
+                                </tr>
+                                <tr v-for="(event, idx) in searchResults" :key="idx"
+                                    class="border-b border-gray-700 hover:bg-gray-700/50 transition-colors">
                                     <td class="p-4 font-mono text-gray-300">{{ event.time }}</td>
-                                    <td class="p-4 font-bold text-gray-200">{{ event.deviceId }}</td>
                                     <td class="p-4">
-                                        <span class="px-2 py-1 rounded text-xs font-bold"
-                                              :class="{
-                                                  'bg-red-900/30 text-red-400 border border-red-800': event.type === 'SOS',
-                                                  'bg-purple-900/30 text-purple-400 border border-purple-800': event.type === 'MARK',
-                                                  'bg-orange-900/30 text-orange-400 border border-orange-800': event.type === 'HR_ALERT'
-                                              }">
+                                        <span class="px-2 py-1 rounded text-xs font-bold bg-gray-700 text-gray-300 border border-gray-600">
                                             {{ event.type }}
                                         </span>
                                     </td>
                                     <td class="p-4 text-gray-400">{{ event.details }}</td>
-                                    <td class="p-4 text-right">
-                                        <button @click="openPlayback(event)" class="opacity-70 group-hover:opacity-100 bg-purple-600 hover:bg-purple-500 text-white px-4 py-1.5 rounded text-xs font-bold transition-all shadow-lg flex items-center gap-2 ml-auto">
-                                            <span>▶</span> 影像回放
-                                        </button>
-                                    </td>
                                 </tr>
                             </tbody>
                         </table>
@@ -249,13 +231,13 @@ export default {
         const devicePositions = ref({});
 
         const searchQuery = ref({
-            deviceId: '',
-            eventType: 'ALL',
             startTime: '',
             endTime: ''
         });
 
         const searchResults = ref([]);
+        const searchLoading = ref(false);
+        const searchError   = ref('');
 
         const deviceCount = computed(() => {
             return Object.keys(devicePositions.value).length;
@@ -317,65 +299,40 @@ export default {
         };
 
         const executeSearch = async () => {
-            if (!searchQuery.value.deviceId) {
-                alert("請先選擇要搜尋的設備 ID！");
-                return;
-            }
-
-            if (!searchQuery.value.startTime || !searchQuery.value.endTime) {
-                alert("請選擇開始和結束時間！");
-                return;
-            }
+            if (!searchQuery.value.startTime || !searchQuery.value.endTime) return;
+            searchLoading.value = true;
+            searchError.value   = '';
+            searchResults.value = [];
 
             try {
-                // 轉換時間格式：從 2026-03-18T14:32 轉為 2026-03-18 14:32:00
-                const formatTime = (dt) => {
-                    if (!dt) return '';
-                    return dt.replace('T', ' ') + ':00';
-                };
-
-                const beginTime = formatTime(searchQuery.value.startTime);
-                const endTime = formatTime(searchQuery.value.endTime);
-                const eventType = searchQuery.value.eventType !== 'ALL' ? searchQuery.value.eventType : '';
-
+                const toNvrTime = (dt) => dt.replace('T', ' ') + ':00';
                 const params = new URLSearchParams({
-                    begin_time: beginTime,
-                    end_time: endTime,
-                    device_id: searchQuery.value.deviceId,
-                    event_type: eventType,
+                    begin_time: toNvrTime(searchQuery.value.startTime),
+                    end_time:   toNvrTime(searchQuery.value.endTime),
                     start: 0,
                     limit: 100
                 });
 
-                const res = await fetch(`/api/nvr/query_event?${params.toString()}`);
-
-                if (!res.ok) {
-                    throw new Error(`HTTP ${res.status}`);
-                }
-
+                const res = await fetch(`/api/nvr/query_event?${params}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
 
-                // 將 NVR 事件映射到前端格式
                 if (data.data && Array.isArray(data.data)) {
                     searchResults.value = data.data.map((evt, idx) => ({
-                        id: idx,
-                        time: evt.EventTime || evt.time || '未知時間',
-                        deviceId: evt.DeviceID || searchQuery.value.deviceId,
-                        type: evt.EventType || evt.type || 'UNKNOWN',
-                        details: evt.EventDesc || evt.description || '事件詳情'
+                        id:      idx,
+                        time:    evt.EventTime || evt.time || '未知時間',
+                        type:    evt.EventType || evt.type || 'UNKNOWN',
+                        details: evt.EventDesc || evt.description || '--'
                     }));
-                } else {
-                    searchResults.value = [];
+                }
+                if (searchResults.value.length === 0) {
+                    searchError.value = '該時段無事件紀錄';
                 }
             } catch (e) {
-                console.error('Event search error:', e);
-                alert(`查詢失敗: ${e.message}`);
-                searchResults.value = [];
+                searchError.value = '查詢失敗：' + e.message;
+            } finally {
+                searchLoading.value = false;
             }
-        };
-
-        const openPlayback = (event) => {
-            alert(`即將為您跳轉至【整合回放模組】\n調閱設備: ${event.deviceId}\n時間點: ${event.time}`);
         };
 
         onMounted(() => {
@@ -396,8 +353,9 @@ export default {
             isDeviceOnline,
             searchQuery,
             searchResults,
+            searchLoading,
+            searchError,
             executeSearch,
-            openPlayback,
             refreshAll
         };
     }
