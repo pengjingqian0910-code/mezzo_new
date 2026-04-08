@@ -1,0 +1,56 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+
+            # Clone or pull latest code
+            if [ -d ~/mezzo_web_system ]; then
+              cd ~/mezzo_web_system
+              git pull origin main
+            else
+              git clone https://github.com/pengjingqian0910-code/mezzo_new.git ~/mezzo_web_system
+              cd ~/mezzo_web_system
+            fi
+
+            # Build new Docker image
+            docker build -t mezzo:latest .
+
+            # Stop and remove old container
+            docker stop mezzo 2>/dev/null || true
+            docker rm mezzo 2>/dev/null || true
+
+            # Start new container
+            docker run -d \
+              --name mezzo \
+              --restart unless-stopped \
+              -p 5555:5555 \
+              -e MQTT_BROKER_HOST=${{ secrets.MQTT_BROKER_HOST }} \
+              -e MQTT_BROKER_PORT=${{ secrets.MQTT_BROKER_PORT }} \
+              -e MQTT_TOPIC=${{ secrets.MQTT_TOPIC }} \
+              -e NVR_HOST=${{ secrets.NVR_HOST }} \
+              -e NVR_AUTH=${{ secrets.NVR_AUTH }} \
+              -e AUDIO_BASE_PATH=static/audio \
+              mezzo:latest
+
+            echo "Deployment complete!"
+            docker ps | grep mezzo
