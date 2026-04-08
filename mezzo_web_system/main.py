@@ -106,7 +106,16 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 async def get_index():
     return FileResponse("index_3D.html", media_type="text/html")
 
+# ====== 靜態檔案掛載 ======
 app.mount("/static", StaticFiles(directory="static"), name="static")
+# 掛載根目錄的 js, WiB.png 等靜態資源
+import os
+if os.path.isdir("js"):
+    app.mount("/js", StaticFiles(directory="js"), name="js")
+if os.path.isfile("WiB.png"):
+    @app.get("/WiB.png")
+    async def get_wib_png():
+        return FileResponse("WiB.png", media_type="image/png")
 
 # ====== WebSocket 管理器 ======
 class ConnectionManager:
