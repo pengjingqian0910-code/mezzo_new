@@ -97,7 +97,7 @@
                 <div class="p-6 border-b border-gray-800 flex flex-col items-start w-full">
                     <img src="/static/WiB.png" alt="WiB Logo"
                         class="w-full h-auto max-h-20 object-contain object-left mb-3 drop-shadow-md">
-                    <p class="text-xs text-green-400 mt-1 font-bold">在線: {{ store.currentUser.username }}</p>
+                    <p class="text-xs text-green-400 mt-1 font-bold">在線: {{ store.currentUser?.username }}</p>
                 </div>
                 <nav class="flex-1 p-4 space-y-2 overflow-y-auto">
                     <button @click="currentTab = 'MapTab'"
