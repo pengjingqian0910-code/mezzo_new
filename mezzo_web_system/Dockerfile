@@ -17,6 +17,6 @@ COPY . .
 # 建立音檔目錄和複製靜態資源
 RUN mkdir -p static/audio && cp -r js static/js && cp WiB.png static/WiB.png
 
-EXPOSE 5555
+EXPOSE 80
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5555"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]

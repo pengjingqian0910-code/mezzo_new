@@ -43,7 +43,7 @@ jobs:
             docker run -d \
               --name mezzo \
               --restart unless-stopped \
-              -p 5555:5555 \
+              -p 80:80 \
               -e MQTT_BROKER_HOST=${{ secrets.MQTT_BROKER_HOST }} \
               -e MQTT_BROKER_PORT=${{ secrets.MQTT_BROKER_PORT }} \
               -e MQTT_TOPIC=${{ secrets.MQTT_TOPIC }} \
