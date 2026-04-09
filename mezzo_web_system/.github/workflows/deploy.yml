@@ -29,10 +29,10 @@ jobs:
               git pull origin main
             else
               git clone https://github.com/pengjingqian0910-code/mezzo_new.git ~/mezzo_web_system
-              cd ~/mezzo_web_system
             fi
 
-            # Build new Docker image
+            # Build new Docker image (Dockerfile is in subdirectory)
+            cd ~/mezzo_web_system/mezzo_web_system
             docker build -t mezzo:latest .
 
             # Stop and remove old container
@@ -43,7 +43,7 @@ jobs:
             docker run -d \
               --name mezzo \
               --restart unless-stopped \
-              -p 80:80 \
+              -p 5555:80 \
               -e MQTT_BROKER_HOST=${{ secrets.MQTT_BROKER_HOST }} \
               -e MQTT_BROKER_PORT=${{ secrets.MQTT_BROKER_PORT }} \
               -e MQTT_TOPIC=${{ secrets.MQTT_TOPIC }} \
