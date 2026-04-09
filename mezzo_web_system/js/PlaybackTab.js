@@ -11,15 +11,15 @@ export default {
                 <h2 class="w-full text-base font-bold text-purple-400 mb-1">錄影查詢</h2>
 
                 <div class="flex flex-col gap-1">
-                    <label class="text-xs text-gray-400">起始時間 <span class="text-gray-600">YYYY-MM-DD HH:MM</span></label>
-                    <input type="text" v-model="startTime" placeholder="2025-01-01 08:00"
-                           class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-purple-500 w-44" />
+                    <label class="text-xs text-gray-400">起始時間</label>
+                    <input type="datetime-local" v-model="startTime"
+                           class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-purple-500" />
                 </div>
 
                 <div class="flex flex-col gap-1">
-                    <label class="text-xs text-gray-400">結束時間 <span class="text-gray-600">YYYY-MM-DD HH:MM</span></label>
-                    <input type="text" v-model="endTime" placeholder="2025-01-01 18:00"
-                           class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-purple-500 w-44" />
+                    <label class="text-xs text-gray-400">結束時間</label>
+                    <input type="datetime-local" v-model="endTime"
+                           class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-purple-500" />
                 </div>
 
                 <div class="flex flex-col gap-1">
@@ -134,8 +134,8 @@ export default {
 
         const canSearch = computed(() => startTime.value && endTime.value);
 
-        // 格式化 "YYYY-MM-DD HH:MM" → NVR 格式 "YYYY-MM-DD HH:MM:00"
-        const toNvrTime = (dt) => dt.trim() + ':00';
+        // datetime-local 值為 "YYYY-MM-DDTHH:mm"，轉為 NVR 格式 "YYYY-MM-DD HH:MM:00"
+        const toNvrTime = (dt) => dt.replace('T', ' ') + ':00';
 
         const search = async () => {
             if (!canSearch.value) return;

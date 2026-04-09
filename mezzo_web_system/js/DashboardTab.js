@@ -171,14 +171,14 @@ export default {
 
                     <div class="p-5 border-b border-gray-700 bg-gray-800/50 flex flex-wrap gap-4 items-end">
                         <div>
-                            <label class="block text-xs text-gray-400 mb-1">起始時間 <span class="text-gray-600">YYYY-MM-DD HH:MM</span></label>
-                            <input type="text" v-model="searchQuery.startTime" placeholder="2025-01-01 08:00"
-                                   class="bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff] w-44">
+                            <label class="block text-xs text-gray-400 mb-1">起始時間</label>
+                            <input type="datetime-local" v-model="searchQuery.startTime"
+                                   class="bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-400 mb-1">結束時間 <span class="text-gray-600">YYYY-MM-DD HH:MM</span></label>
-                            <input type="text" v-model="searchQuery.endTime" placeholder="2025-01-01 18:00"
-                                   class="bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff] w-44">
+                            <label class="block text-xs text-gray-400 mb-1">結束時間</label>
+                            <input type="datetime-local" v-model="searchQuery.endTime"
+                                   class="bg-gray-900 border border-gray-600 rounded px-3 py-2 text-white outline-none focus:border-[#00ffff]">
                         </div>
                         <div>
                             <label class="block text-xs text-gray-400 mb-1">頻道</label>
@@ -313,7 +313,7 @@ export default {
             searchResults.value = [];
 
             try {
-                const toNvrTime = (dt) => dt.trim() + ':00';
+                const toNvrTime = (dt) => dt.replace('T', ' ') + ':00';
                 const params = new URLSearchParams({
                     begin_time: toNvrTime(searchQuery.value.startTime),
                     end_time:   toNvrTime(searchQuery.value.endTime),
