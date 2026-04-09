@@ -1,6 +1,6 @@
 // js/GeofenceTab.js
 import { ref, onMounted, onUnmounted } from 'vue';
-import { store } from './store.js';
+import { store, BASE } from './store.js';
 
 export default {
     template: `
@@ -80,7 +80,7 @@ export default {
                 
                 const geoName = prompt("請輸入警戒區名稱：", "新管制區");
                 if (geoName) {
-                    await fetch('http://localhost:5555/api/geofences', {
+                    await fetch(`${BASE}/api/geofences`, {
                         method: 'POST', headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ name: geoName, points: JSON.stringify(tempPoints.value) })
                     });
@@ -112,12 +112,12 @@ export default {
 
         const startDrawing = () => { isDrawing.value = true; tempPoints.value = []; };
         const toggleGeo = async (id) => {
-            await fetch(`http://localhost:5555/api/geofences/${id}/toggle`, { method: 'PUT' });
+            await fetch(`${BASE}/api/geofences/${id}/toggle`, { method: 'PUT' });
             store.fetchGeofences();
         };
         const deleteGeo = async (id) => {
             if (confirm("確定刪除此警戒區？")) {
-                await fetch(`http://localhost:5555/api/geofences/${id}`, { method: 'DELETE' });
+                await fetch(`${BASE}/api/geofences/${id}`, { method: 'DELETE' });
                 store.fetchGeofences();
             }
         };

@@ -1,6 +1,6 @@
 // js/DashboardTab.js
 import { ref, onMounted, computed } from 'vue';
-import { store } from './store.js';
+import { store, BASE } from './store.js';
 
 export default {
     template: `
@@ -255,7 +255,7 @@ export default {
         const fetchNvrInfo = async () => {
             loadingNvrInfo.value = true;
             try {
-                const res = await fetch('/api/nvr/server_info');
+                const res = await fetch(`${BASE}/api/nvr/server_info`);
                 if (res.ok) {
                     nvrServerInfo.value = await res.json();
                 }
@@ -269,7 +269,7 @@ export default {
         const fetchCameras = async () => {
             loadingCameras.value = true;
             try {
-                const res = await fetch('/api/nvr/cameras');
+                const res = await fetch(`${BASE}/api/nvr/cameras`);
                 if (res.ok) {
                     const data = await res.json();
                     cameraList.value = Array.isArray(data) ? data : data.cameras || [];
@@ -283,7 +283,7 @@ export default {
 
         const fetchDevicePositions = async () => {
             try {
-                const res = await fetch('/api/devices/positions');
+                const res = await fetch(`${BASE}/api/devices/positions`);
                 if (res.ok) {
                     devicePositions.value = await res.json();
                 }
@@ -313,7 +313,7 @@ export default {
                     limit: 100
                 });
 
-                const res = await fetch(`/api/nvr/query_event?${params}`);
+                const res = await fetch(`${BASE}/api/nvr/query_event?${params}`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
 

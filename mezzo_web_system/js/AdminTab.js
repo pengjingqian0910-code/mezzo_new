@@ -1,6 +1,6 @@
 // js/AdminTab.js
 import { ref, onMounted } from 'vue';
-import { store } from './store.js';
+import { store, BASE } from './store.js';
 
 export default {
     template: `
@@ -98,37 +98,37 @@ export default {
 
         const fetchData = async () => {
             if(store.currentUser.role === 'admin') {
-                const devRes = await fetch('/api/admin/all_devices');
+                const devRes = await fetch(`${BASE}/api/admin/all_devices`);
                 allSysDevices.value = await devRes.json();
                 
-                const userRes = await fetch('/api/users');
+                const userRes = await fetch(`${BASE}/api/users`);
                 users.value = await userRes.json();
                 managers.value = users.value.filter(u => u.role === 'group_manager' || u.role === 'admin');
             }
         };
 
         const addDevice = async () => {
-            const res = await fetch('/api/devices', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(newDev.value) });
+            const res = await fetch(`${BASE}/api/devices`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(newDev.value) });
             if(res.ok) { newDev.value = { device_id: '', name: '' }; fetchData(); }
             else { alert(await res.text()); }
         };
 
         const deleteDevice = async (id) => {
-            if(confirm('確定從系統徹底刪除?')) { await fetch(`/api/devices/${id}`, { method: 'DELETE' }); fetchData(); store.fetchDevices(); }
+            if(confirm('確定從系統徹底刪除?')) { await fetch(`${BASE}/api/devices/${id}`, { method: 'DELETE' }); fetchData(); store.fetchDevices(); }
         };
 
         const bindDevice = async () => {
-            const res = await fetch(`/api/users/${store.currentUser.username}/bind`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({device_id: bindDevId.value}) });
+            const res = await fetch(`${BASE}/api/users/${store.currentUser.username}/bind`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({device_id: bindDevId.value}) });
             if(res.ok) { bindDevId.value = ''; store.fetchDevices(); }
             else { alert("綁定失敗，請確認 Device ID 是否註冊於系統中"); }
         };
 
         const unbindDevice = async (id) => {
-            if(confirm('解除綁定後將無法監看此設備?')) { await fetch(`/api/users/${store.currentUser.username}/unbind/${id}`, { method: 'DELETE' }); store.fetchDevices(); }
+            if(confirm('解除綁定後將無法監看此設備?')) { await fetch(`${BASE}/api/users/${store.currentUser.username}/unbind/${id}`, { method: 'DELETE' }); store.fetchDevices(); }
         };
 
         const updateUserGroup = async (user) => {
-            await fetch(`/api/users/${user.username}/assign_manager`, { 
+            await fetch(`${BASE}/api/users/${user.username}/assign_manager`, { 
                 method: 'PUT', headers: {'Content-Type': 'application/json'}, 
                 body: JSON.stringify({ role: user.role, manager_username: user.manager }) 
             });
@@ -138,7 +138,7 @@ export default {
         const resetPwd = async (username) => {
             const newPwd = prompt(`請輸入 ${username} 的新密碼:`);
             if(newPwd) {
-                await fetch(`/api/users/${username}/reset_password`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({new_password: newPwd}) });
+                await fetch(`${BASE}/api/users/${username}/reset_password`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({new_password: newPwd}) });
                 alert("密碼已重設");
             }
         };

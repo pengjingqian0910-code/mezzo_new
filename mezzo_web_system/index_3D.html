@@ -5,6 +5,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WiB EOC 緊急調度指揮系統</title>
+    <script>
+        // 自動偵測部署路徑：若在 /mezzo/ 子路徑下則設定 BASE
+        (function() {
+            const path = location.pathname;
+            const match = path.match(/^(\/mezzo)/);
+            window.MEZZO_BASE = match ? match[1] : '';
+        })();
+    </script>
     <script type="importmap">{"imports": {"vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.js"}}</script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.107/Build/Cesium/Cesium.js"></script>
@@ -171,7 +179,7 @@
 
                 const handleLogin = async () => {
                     try {
-                        const res = await fetch('/api/login', {
+                        const res = await fetch(`${window.MEZZO_BASE}/api/login`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(authForm.value)
                         });
@@ -197,7 +205,7 @@
                 const handleSelfBind = async () => {
                     if (!bindDeviceId.value.trim()) { bindError.value = '請輸入 Device ID'; return; }
                     try {
-                        const res = await fetch('/api/me/bind_device', {
+                        const res = await fetch(`${window.MEZZO_BASE}/api/me/bind_device`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${store.currentUser.token}` },
                             body: JSON.stringify({ device_id: bindDeviceId.value.trim() })
@@ -214,7 +222,7 @@
 
                 const handleRegister = async () => {
                     try {
-                        const res = await fetch('/api/register', {
+                        const res = await fetch(`${window.MEZZO_BASE}/api/register`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(authForm.value)
                         });
@@ -232,7 +240,7 @@
                 const logout = async () => {
                     const token = localStorage.getItem('mezzo_token');
                     if (token) {
-                        fetch('/api/logout', { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
+                        fetch(`${window.MEZZO_BASE}/api/logout`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } });
                         localStorage.removeItem('mezzo_token');
                     }
                     store.currentUser = null;

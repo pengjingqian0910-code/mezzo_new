@@ -1,5 +1,6 @@
 // js/PlaybackTab.js
 import { ref, computed } from 'vue';
+import { BASE } from './store.js';
 
 export default {
     template: `
@@ -151,7 +152,7 @@ export default {
                     begin_time: begin,
                     end_time:   end,
                 });
-                const res  = await fetch(`/api/nvr/history?${params}`);
+                const res  = await fetch(`${BASE}/api/nvr/history?${params}`);
                 const data = await res.json();
 
                 if (!data.success) {
@@ -183,8 +184,8 @@ export default {
             selectedFile.value = f;
             streamError.value  = '';
             useStream.value    = true;
-            streamSrc.value    = `/api/nvr/playback_stream/${f.Channel}?time=${encodeURIComponent(f.BeginTime)}`;
-            videoSrc.value     = `/api/nvr/download/avi?tag=${encodeURIComponent(f.Tag)}`;
+            streamSrc.value    = `${BASE}/api/nvr/playback_stream/${f.Channel}?time=${encodeURIComponent(f.BeginTime)}`;
+            videoSrc.value     = `${BASE}/api/nvr/download/avi?tag=${encodeURIComponent(f.Tag)}`;
         };
 
         const toggleMode = () => {
@@ -196,8 +197,8 @@ export default {
             streamError.value = 'NVR 串流連線失敗，請改用下載模式';
         };
 
-        const downloadAvi = (tag) => window.open(`/api/nvr/download/avi?tag=${encodeURIComponent(tag)}`, '_blank');
-        const downloadRaw = (tag) => window.open(`/api/nvr/download/raw?tag=${encodeURIComponent(tag)}`, '_blank');
+        const downloadAvi = (tag) => window.open(`${BASE}/api/nvr/download/avi?tag=${encodeURIComponent(tag)}`, '_blank');
+        const downloadRaw = (tag) => window.open(`${BASE}/api/nvr/download/raw?tag=${encodeURIComponent(tag)}`, '_blank');
 
         return {
             startTime, endTime, channel, loading, error, results,

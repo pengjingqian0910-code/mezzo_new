@@ -1,6 +1,6 @@
 // js/PttTab.js
 import { ref, onMounted, onUnmounted, nextTick } from 'vue';
-import { store } from './store.js';
+import { store, BASE } from './store.js';
 
 export default {
     template: `
@@ -201,7 +201,7 @@ export default {
         // ================= 1. 透過 WebSocket 與後端 TCP MQTT 代理連線 =================
         const connectBackendProxy = () => {
             const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            wsClient = new WebSocket(`${wsProto}//${location.host}/ws/ptt`);
+            wsClient = new WebSocket(`${wsProto}//${location.host}${BASE}/ws/ptt`);
             
             wsClient.onopen = () => {
                 isMqttConnected.value = true;
@@ -433,7 +433,7 @@ export default {
             const deviceId = searchQuery.value || targetDevice.value;
             if (!deviceId) { historyRecords.value = []; return; }
             try {
-                const res = await fetch(`/api/audio/${encodeURIComponent(deviceId)}`);
+                const res = await fetch(`${BASE}/api/audio/${encodeURIComponent(deviceId)}`);
                 const files = await res.json();
                 historyRecords.value = files.map(f => ({
                     id: f.filename,
