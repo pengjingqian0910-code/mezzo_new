@@ -19,7 +19,7 @@ RUN mkdir -p static/audio && cp WiB.png static/WiB.png
 
 # entrypoint：每次啟動時同步 js/ → static/js/，再起 uvicorn
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 EXPOSE 80
 
