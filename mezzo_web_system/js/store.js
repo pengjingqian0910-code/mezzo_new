@@ -9,7 +9,8 @@ export const store = reactive({
     devices: [],
     telemetry: {},
     geofences: [],
-    alerts: [], 
+    alerts: [],
+    sosAlerts: [],   // SOS 緊急告警佇列，由 WebSocket sos_alert 事件推入
 
     async fetchDevices() {
         if (!this.currentUser) return;
@@ -38,6 +39,8 @@ export const store = reactive({
             if (msg.type === 'telemetry_update') {
                 this.telemetry = msg.data;
                 this.checkGeofence();
+            } else if (msg.type === 'sos_alert') {
+                this.sosAlerts.push(msg.data);
             }
         };
     },
