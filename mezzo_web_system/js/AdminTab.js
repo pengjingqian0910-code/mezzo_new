@@ -100,9 +100,10 @@ export default {
             if(store.currentUser.role === 'admin') {
                 const devRes = await fetch(`${BASE}/api/admin/all_devices`);
                 allSysDevices.value = await devRes.json();
-                
-                const userRes = await fetch(`${BASE}/api/users`);
-                users.value = await userRes.json();
+
+                const userRes = await store.authFetch(`${BASE}/api/users`);
+                const userData = await userRes.json();
+                users.value = Array.isArray(userData) ? userData : [];
                 managers.value = users.value.filter(u => u.role === 'group_manager' || u.role === 'admin');
             }
         };

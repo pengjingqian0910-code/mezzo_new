@@ -31,6 +31,14 @@ export const store = reactive({
         }
     },
 
+    // 帶 Authorization header 的 fetch 包裝，供各 Tab 使用
+    authFetch(url, options = {}) {
+        const token = localStorage.getItem('mezzo_token');
+        const headers = { ...(options.headers || {}) };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        return fetch(url, { ...options, headers });
+    },
+
     connectWebSocket() {
         const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(`${wsProto}//${location.host}${BASE}/ws/map-data`);

@@ -250,9 +250,11 @@ export default {
 
         const fetchUsers = async () => {
             try {
-                const res  = await fetch(`${BASE}/api/users`);
+                const res  = await store.authFetch(`${BASE}/api/users`);
                 const data = await res.json();
-                users.value = data.map(u => ({ ...u, whatsapp_input: u.whatsapp || '', save_ok: false }));
+                users.value = Array.isArray(data)
+                    ? data.map(u => ({ ...u, whatsapp_input: u.whatsapp || '', save_ok: false }))
+                    : [];
             } catch {}
         };
 
@@ -289,7 +291,7 @@ export default {
 
         const updateWhatsApp = async (u) => {
             u.save_ok = false;
-            const res = await fetch(`${BASE}/api/users/${u.username}/whatsapp`, {
+            const res = await store.authFetch(`${BASE}/api/users/${u.username}/whatsapp`, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ whatsapp: u.whatsapp_input })
             });

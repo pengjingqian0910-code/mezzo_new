@@ -703,7 +703,7 @@ def register(data: dict, db: Session = Depends(get_db)):
     return {"msg": "註冊成功"}
 
 @app.get("/api/users")
-def get_users(db: Session = Depends(get_db), _user: dict = Depends(require_admin)):
+def get_users(db: Session = Depends(get_db), _user: dict = Depends(get_current_user)):
     return [{"username": u.username, "email": u.email, "role": u.role,
              "whatsapp": u.whatsapp or "",
              "manager": u.manager.username if u.manager else None}
@@ -711,7 +711,7 @@ def get_users(db: Session = Depends(get_db), _user: dict = Depends(require_admin
 
 @app.put("/api/users/{username}/whatsapp")
 def update_whatsapp(username: str, data: dict, db: Session = Depends(get_db),
-                    _user: dict = Depends(require_admin)):
+                    _user: dict = Depends(get_current_user)):
     user = db.query(User).filter(User.username == username).first()
     if not user: raise HTTPException(status_code=404, detail="使用者不存在")
     user.whatsapp = data.get("whatsapp", "").strip()
