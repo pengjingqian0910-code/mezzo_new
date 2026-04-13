@@ -1,0 +1,76 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # 需要前一個 commit 以判斷哪些檔案有變動
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+
+            # 拉取最新程式碼
+            cd ~/mezzo_web_system
+            git pull origin main
+
+            # 判斷是否需要重新 build image
+            # 只有 Dockerfile / requirements.txt / entrypoint.sh 變動才需要 build
+            REBUILD=false
+            if git diff HEAD~1 HEAD --name-only 2>/dev/null | grep -qE "Dockerfile|requirements\.txt|entrypoint\.sh"; then
+              REBUILD=true
+            fi
+
+            # 容器不存在時也需要 build
+            if ! docker image inspect mezzo:latest > /dev/null 2>&1; then
+              REBUILD=true
+            fi
+
+            if [ "$REBUILD" = "true" ]; then
+              echo ">>> 偵測到 Dockerfile/requirements 變動，重新 build image..."
+              cd ~/mezzo_web_system/mezzo_web_system
+              docker build -t mezzo:latest .
+
+              # 重新建立容器（含 volume 掛載）
+              docker stop mezzo 2>/dev/null || true
+              docker rm   mezzo 2>/dev/null || true
+              docker run -d \
+                --name mezzo \
+                --restart unless-stopped \
+                -p 5555:80 \
+                -v ~/mezzo_web_system/mezzo_web_system:/app \
+                mezzo:latest
+            else
+              echo ">>> 程式碼異動，重啟容器即可（volume 掛載，無需重新 build）..."
+              # 容器不存在時改用 run
+              if docker ps -a --format '{{.Names}}' | grep -q '^mezzo$'; then
+                docker restart mezzo
+              else
+                cd ~/mezzo_web_system/mezzo_web_system
+                docker build -t mezzo:latest .
+                docker run -d \
+                  --name mezzo \
+                  --restart unless-stopped \
+                  -p 5555:80 \
+                  -v ~/mezzo_web_system/mezzo_web_system:/app \
+                  mezzo:latest
+              fi
+            fi
+
+            echo "✅ 部署完成"
+            docker ps | grep mezzo

@@ -14,9 +14,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 複製應用程式
 COPY . .
 
-# 建立音檔目錄和複製靜態資源
-RUN mkdir -p static/audio && cp -r js static/js && cp WiB.png static/WiB.png
+# 建立音檔目錄與靜態資源（build 時預先複製，volume 掛載時由 entrypoint.sh 覆蓋）
+RUN mkdir -p static/audio && cp WiB.png static/WiB.png
+
+# entrypoint：每次啟動時同步 js/ → static/js/，再起 uvicorn
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 80
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "80"]
+CMD ["/entrypoint.sh"]
