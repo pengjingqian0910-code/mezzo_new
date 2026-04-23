@@ -4,3 +4,4 @@ paho-mqtt==1.6.1
 sqlalchemy==2.0.29
 python-dotenv==1.0.1
 python-multipart==0.0.9
+aiohttp==3.9.5

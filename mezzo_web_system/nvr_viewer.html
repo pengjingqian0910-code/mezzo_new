@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WiB NVR Viewer</title>
+<script>
+    // 自動偵測部署路徑
+    (function() {
+        const m = location.pathname.match(/^(\/mezzo)/);
+        window.MEZZO_BASE = m ? m[1] : '';
+    })();
+</script>
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+    body { margin:0; background:#0f1115; color:#e2e8f0; font-family:'Segoe UI',sans-serif; }
+    ::-webkit-scrollbar { width:6px; height:6px; }
+    ::-webkit-scrollbar-thumb { background:#334155; border-radius:4px; }
+    .cam-img { width:100%; height:100%; object-fit:contain; background:#000; display:block; }
+    .cam-card { background:#1a1d23; border:1px solid #374151; border-radius:8px; overflow:hidden; cursor:pointer; transition:border-color .2s; }
+    .cam-card:hover { border-color:#6366f1; }
+    .cam-card.selected { border-color:#818cf8; border-width:2px; }
+    .spinner { border:3px solid #374151; border-top-color:#6366f1; border-radius:50%; width:28px; height:28px; animation:spin .8s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app" class="min-h-screen flex flex-col">
+
+    <!-- ── LOGIN SCREEN ── -->
+    <div v-if="!session.token" class="flex-1 flex items-center justify-center">
+        <div class="bg-gray-900 border border-gray-700 rounded-2xl p-10 w-96 shadow-2xl">
+            <div class="text-center mb-8">
+                <div class="text-3xl font-bold text-indigo-400 mb-1">WiB NVR</div>
+                <div class="text-xs text-gray-500">遠端影像監控 / Remote NVR Viewer</div>
+            </div>
+            <div class="space-y-4">
+                <div class="flex gap-2">
+                    <div class="flex-1">
+                        <label class="text-xs text-gray-400 block mb-1">NVR IP</label>
+                        <input v-model="loginForm.ip" type="text" placeholder="118.163.x.x"
+                               class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-indigo-500 font-mono text-sm">
+                    </div>
+                    <div class="w-20">
+                        <label class="text-xs text-gray-400 block mb-1">Port</label>
+                        <input v-model="loginForm.port" type="number" placeholder="80"
+                               class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-indigo-500 font-mono text-sm">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400 block mb-1">帳號 Username</label>
+                    <input v-model="loginForm.username" type="text" placeholder="admin"
+                           class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400 block mb-1">密碼 Password</label>
+                    <input v-model="loginForm.password" type="password" placeholder="••••••"
+                           class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-indigo-500">
+                </div>
+                <div v-if="loginError" class="text-red-400 text-xs bg-red-900/20 border border-red-700/40 rounded p-2">
+                    {{ loginError }}
+                </div>
+                <button @click="doLogin" :disabled="loginLoading"
+                        class="w-full bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 text-white font-bold py-2.5 rounded transition-colors">
+                    <span v-if="loginLoading" class="flex items-center justify-center gap-2">
+                        <span class="spinner w-4 h-4"></span> 連線中…
+                    </span>
+                    <span v-else>連線至 NVR</span>
+                </button>
+            </div>
+            <div class="mt-6 text-center text-xs text-gray-600">
+                若使用 WiB EOC 帳號，可直接
+                <a :href="(window.MEZZO_BASE||'')+'/'" class="text-indigo-400 hover:underline">前往主控台</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── MAIN VIEWER ── -->
+    <template v-else>
+
+        <!-- Header -->
+        <header class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center gap-4 flex-shrink-0 shadow-lg z-10">
+            <div class="text-lg font-bold text-indigo-400 flex items-center gap-2">
+                <span>📹</span> WiB NVR Viewer
+            </div>
+            <div v-if="serverInfo" class="text-xs text-gray-500 hidden sm:block">
+                {{ serverInfo.Model || serverInfo.model || '' }}
+                {{ serverInfo.Version ? 'v'+serverInfo.Version : '' }}
+                — {{ serverInfo.Hostname || serverInfo.hostname || session.ip }}
+            </div>
+            <div class="ml-auto flex items-center gap-4">
+                <div class="flex items-center gap-2 text-xs">
+                    <span class="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
+                    <span class="text-green-400">已連線</span>
+                    <span class="text-gray-500">{{ session.ip }}</span>
+                </div>
+                <button @click="doLogout" class="text-xs text-gray-500 hover:text-red-400 transition-colors px-2 py-1 rounded border border-gray-700 hover:border-red-700">
+                    登出
+                </button>
+            </div>
+        </header>
+
+        <div class="flex flex-1 overflow-hidden">
+
+            <!-- ── Left: Camera Grid ── -->
+            <div class="flex-1 flex flex-col overflow-hidden">
+
+                <!-- Grid controls -->
+                <div class="bg-gray-900/50 border-b border-gray-800 px-4 py-2 flex items-center gap-4 flex-shrink-0">
+                    <span class="text-xs text-gray-400">攝影機 ({{ cameras.length }})</span>
+                    <div class="flex gap-1 ml-auto">
+                        <button v-for="n in [2,3,4]" :key="n"
+                                @click="gridCols = n"
+                                :class="gridCols===n ? 'bg-indigo-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'"
+                                class="px-2 py-1 rounded text-xs transition-colors">
+                            {{ n }}×{{ n }}
+                        </button>
+                    </div>
+                    <button @click="refreshAll" class="text-gray-500 hover:text-indigo-400 text-lg transition-colors" title="全部重新整理">↻</button>
+                </div>
+
+                <!-- Camera cards -->
+                <div class="flex-1 overflow-y-auto p-4">
+                    <div v-if="cameras.length === 0" class="flex items-center justify-center h-full text-gray-600 text-sm">
+                        <div class="text-center">
+                            <div class="spinner mx-auto mb-3"></div>
+                            <div>載入攝影機列表中…</div>
+                        </div>
+                    </div>
+                    <div v-else
+                         :class="'grid gap-3 grid-cols-' + gridCols"
+                         class="grid">
+                        <div v-for="cam in cameras" :key="cam.ch"
+                             class="cam-card aspect-video"
+                             :class="selectedCam && selectedCam.ch === cam.ch ? 'selected' : ''"
+                             @click="selectCamera(cam)">
+                            <div class="relative w-full h-full bg-black">
+                                <!-- MJPEG stream via <img> — natively supported by browsers -->
+                                <img v-if="!cam.error"
+                                     :src="mjpegUrl(cam.ch)"
+                                     class="cam-img"
+                                     :alt="cam.name"
+                                     @error="cam.error = true">
+                                <!-- Snapshot fallback when MJPEG fails -->
+                                <div v-else class="flex flex-col items-center justify-center w-full h-full gap-2">
+                                    <img :src="snapshotUrl(cam.ch)"
+                                         class="cam-img object-contain"
+                                         :alt="cam.name"
+                                         @error="cam.snapError = true"
+                                         v-if="!cam.snapError">
+                                    <div v-else class="text-gray-600 text-xs text-center">
+                                        <div class="text-3xl mb-1">📷</div>
+                                        <div>無法載入串流</div>
+                                    </div>
+                                </div>
+                                <!-- Overlay: channel name + status -->
+                                <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5 flex items-end justify-between">
+                                    <span class="text-xs font-bold text-white truncate">CH{{ cam.ch }}: {{ cam.name }}</span>
+                                    <span class="text-[10px] px-1.5 py-0.5 rounded"
+                                          :class="cam.enabled ? 'bg-green-900/70 text-green-400' : 'bg-gray-800 text-gray-500'">
+                                        {{ cam.enabled ? 'ON' : 'OFF' }}
+                                    </span>
+                                </div>
+                                <!-- Selected indicator -->
+                                <div v-if="selectedCam && selectedCam.ch === cam.ch"
+                                     class="absolute top-1 right-1 bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded font-bold">
+                                    已選
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Right: Playback Panel ── -->
+            <div v-if="selectedCam" class="w-80 bg-gray-900 border-l border-gray-800 flex flex-col overflow-hidden flex-shrink-0">
+
+                <!-- Panel header -->
+                <div class="px-4 py-3 border-b border-gray-800 flex items-center justify-between">
+                    <div>
+                        <div class="text-sm font-bold text-indigo-300">CH{{ selectedCam.ch }}: {{ selectedCam.name }}</div>
+                        <div class="text-xs text-gray-500 mt-0.5">歷史回放 / Playback</div>
+                    </div>
+                    <button @click="selectedCam = null; playbackActive = false"
+                            class="text-gray-600 hover:text-gray-400 text-lg leading-none">×</button>
+                </div>
+
+                <!-- Date / time search -->
+                <div class="px-4 py-3 border-b border-gray-800 space-y-3">
+                    <div>
+                        <label class="text-xs text-gray-400 block mb-1">查詢日期</label>
+                        <input v-model="playbackDate" type="date"
+                               class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-indigo-500 text-sm">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="text-xs text-gray-400 block mb-1">開始時間</label>
+                            <input v-model="playbackStart" type="time"
+                                   class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-indigo-500 text-sm">
+                        </div>
+                        <div>
+                            <label class="text-xs text-gray-400 block mb-1">結束時間</label>
+                            <input v-model="playbackEnd" type="time"
+                                   class="w-full bg-gray-800 border border-gray-700 rounded p-2 text-white outline-none focus:border-indigo-500 text-sm">
+                        </div>
+                    </div>
+                    <button @click="searchRecordings" :disabled="searchLoading"
+                            class="w-full bg-indigo-700 hover:bg-indigo-600 disabled:bg-gray-700 text-white py-2 rounded text-sm font-bold transition-colors">
+                        {{ searchLoading ? '搜尋中…' : '🔍 搜尋錄影' }}
+                    </button>
+                </div>
+
+                <!-- Recording list -->
+                <div class="flex-1 overflow-y-auto px-4 py-2">
+                    <div v-if="recordings.length === 0 && !searchLoading" class="text-xs text-center text-gray-600 py-6">
+                        請選擇日期後搜尋錄影
+                    </div>
+                    <div v-for="(rec, idx) in recordings" :key="idx"
+                         class="mb-2 bg-gray-800 border border-gray-700 rounded p-2.5 text-xs space-y-2">
+                        <div class="text-gray-300 font-mono leading-relaxed">
+                            <div>開始：{{ rec.StartTime || rec.start_time || rec.BeginTime || '—' }}</div>
+                            <div>結束：{{ rec.EndTime || rec.end_time || '—' }}</div>
+                        </div>
+                        <div class="flex gap-2">
+                            <button @click="playRecording(rec)"
+                                    class="flex-1 bg-indigo-800 hover:bg-indigo-700 text-white py-1 rounded font-bold transition-colors">
+                                ▶ 播放
+                            </button>
+                            <button @click="downloadRec(rec)"
+                                    class="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 py-1 rounded font-bold transition-colors">
+                                ⬇ AVI
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Playback stream -->
+                <div v-if="playbackActive" class="border-t border-gray-800 p-3 flex-shrink-0">
+                    <div class="text-xs text-indigo-400 font-bold mb-2">▶ 回放中</div>
+                    <div class="relative bg-black rounded overflow-hidden" style="aspect-ratio:16/9">
+                        <img :src="playbackStreamUrl" class="w-full h-full object-contain"
+                             @error="playbackStreamError = true">
+                        <div v-if="playbackStreamError"
+                             class="absolute inset-0 flex items-center justify-center text-red-400 text-xs">
+                            無法載入回放串流
+                        </div>
+                    </div>
+                    <button @click="playbackActive = false"
+                            class="w-full mt-2 text-xs text-gray-500 hover:text-gray-300 py-1 border border-gray-700 rounded">
+                        停止回放
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </template>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue;
+const BASE = window.MEZZO_BASE || '';
+
+createApp({
+    setup() {
+        // ── session ──
+        const session = ref({ token: '', ip: '' });
+        const serverInfo = ref(null);
+
+        // ── login ──
+        const loginForm = ref({ ip: '118.163.141.80', port: 80, username: 'admin', password: '' });
+        const loginLoading = ref(false);
+        const loginError = ref('');
+
+        // ── cameras ──
+        const cameras = ref([]);
+        const gridCols = ref(3);
+        const selectedCam = ref(null);
+
+        // ── playback ──
+        const playbackDate = ref(new Date().toISOString().slice(0, 10));
+        const playbackStart = ref('00:00');
+        const playbackEnd = ref('23:59');
+        const recordings = ref([]);
+        const searchLoading = ref(false);
+        const playbackActive = ref(false);
+        const playbackStreamUrl = ref('');
+        const playbackStreamError = ref(false);
+
+        // ── restore session from localStorage ──
+        onMounted(() => {
+            const saved = localStorage.getItem('nvrv_session');
+            if (saved) {
+                try {
+                    const s = JSON.parse(saved);
+                    if (s.token && s.ip) {
+                        session.value = s;
+                        loadCameras();
+                        loadServerInfo();
+                    }
+                } catch (e) {}
+            }
+        });
+
+        const mjpegUrl = (ch) =>
+            `${BASE}/api/nvrv/mjpeg/${ch}?token=${session.value.token}`;
+
+        const snapshotUrl = (ch) =>
+            `${BASE}/api/nvrv/snapshot/${ch}?token=${session.value.token}`;
+
+        const doLogin = async () => {
+            loginLoading.value = true;
+            loginError.value = '';
+            try {
+                const res = await fetch(`${BASE}/api/nvrv/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(loginForm.value)
+                });
+                if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    loginError.value = d.detail || `連線失敗 (${res.status})`;
+                    return;
+                }
+                const data = await res.json();
+                session.value = { token: data.token, ip: loginForm.value.ip };
+                localStorage.setItem('nvrv_session', JSON.stringify(session.value));
+                loadCameras();
+                loadServerInfo();
+            } catch (e) {
+                loginError.value = `網路錯誤: ${e.message}`;
+            } finally {
+                loginLoading.value = false;
+            }
+        };
+
+        const doLogout = async () => {
+            await fetch(`${BASE}/api/nvrv/logout`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: session.value.token })
+            }).catch(() => {});
+            localStorage.removeItem('nvrv_session');
+            session.value = { token: '', ip: '' };
+            cameras.value = [];
+            selectedCam.value = null;
+            serverInfo.value = null;
+        };
+
+        const loadServerInfo = async () => {
+            try {
+                const res = await fetch(`${BASE}/api/nvrv/server_info?token=${session.value.token}`);
+                if (res.ok) serverInfo.value = await res.json();
+            } catch (e) {}
+        };
+
+        const loadCameras = async () => {
+            cameras.value = [];
+            try {
+                const res = await fetch(`${BASE}/api/nvrv/cameras?token=${session.value.token}`);
+                if (!res.ok) { if (res.status === 401) doLogout(); return; }
+                const data = await res.json();
+
+                // Parse various NVR camera list formats
+                let list = [];
+                if (Array.isArray(data)) {
+                    list = data;
+                } else if (data.Camera && Array.isArray(data.Camera)) {
+                    list = data.Camera;
+                } else if (data.cameras && Array.isArray(data.cameras)) {
+                    list = data.cameras;
+                } else if (typeof data === 'object') {
+                    // Try numeric channel keys
+                    for (const k of Object.keys(data)) {
+                        const v = data[k];
+                        if (typeof v === 'object') list.push({ ch: parseInt(k), ...v });
+                    }
+                }
+
+                cameras.value = list.map((c, idx) => ({
+                    ch: c.Channel !== undefined ? c.Channel : c.ch !== undefined ? c.ch : idx,
+                    name: c.Name || c.name || c.CameraName || `Camera ${idx + 1}`,
+                    enabled: c.Enable !== undefined ? !!c.Enable : c.enabled !== undefined ? !!c.enabled : true,
+                    error: false,
+                    snapError: false
+                }));
+
+                // Default: auto-pick grid size
+                const n = cameras.value.length;
+                gridCols.value = n <= 4 ? 2 : n <= 9 ? 3 : 4;
+            } catch (e) {
+                console.error('loadCameras error:', e);
+            }
+        };
+
+        const refreshAll = () => {
+            cameras.value.forEach(c => { c.error = false; c.snapError = false; });
+            loadCameras();
+        };
+
+        const selectCamera = (cam) => {
+            selectedCam.value = cam;
+            recordings.value = [];
+            playbackActive.value = false;
+        };
+
+        const searchRecordings = async () => {
+            if (!selectedCam.value || !playbackDate.value) return;
+            searchLoading.value = true;
+            recordings.value = [];
+            const begin = `${playbackDate.value} ${playbackStart.value}:00`;
+            const end   = `${playbackDate.value} ${playbackEnd.value}:59`;
+            try {
+                const qs = new URLSearchParams({
+                    ch: selectedCam.value.ch,
+                    begin_time: begin,
+                    end_time: end,
+                    token: session.value.token
+                });
+                const res = await fetch(`${BASE}/api/nvrv/recordings?${qs}`);
+                if (!res.ok) { searchLoading.value = false; return; }
+                const data = await res.json();
+                if (Array.isArray(data)) {
+                    recordings.value = data;
+                } else if (data.Backup && Array.isArray(data.Backup)) {
+                    recordings.value = data.Backup;
+                } else if (data.Record && Array.isArray(data.Record)) {
+                    recordings.value = data.Record;
+                } else {
+                    recordings.value = [];
+                }
+            } catch (e) {
+                console.error('searchRecordings error:', e);
+            } finally {
+                searchLoading.value = false;
+            }
+        };
+
+        const playRecording = (rec) => {
+            const timeStr = rec.StartTime || rec.start_time || rec.BeginTime || '';
+            if (!timeStr || !selectedCam.value) return;
+            const qs = new URLSearchParams({ time_str: timeStr, token: session.value.token });
+            playbackStreamUrl.value = `${BASE}/api/nvrv/playback/${selectedCam.value.ch}?${qs}`;
+            playbackStreamError.value = false;
+            playbackActive.value = true;
+        };
+
+        const downloadRec = (rec) => {
+            const tag = rec.Tag || rec.tag || rec.FileTag || '';
+            if (!tag) { alert('找不到錄影 Tag，無法下載'); return; }
+            const qs = new URLSearchParams({ tag, fmt: 'avi', token: session.value.token });
+            window.open(`${BASE}/api/nvrv/download?${qs}`, '_blank');
+        };
+
+        return {
+            session, serverInfo,
+            loginForm, loginLoading, loginError,
+            cameras, gridCols, selectedCam,
+            playbackDate, playbackStart, playbackEnd,
+            recordings, searchLoading,
+            playbackActive, playbackStreamUrl, playbackStreamError,
+            mjpegUrl, snapshotUrl,
+            doLogin, doLogout,
+            loadCameras, refreshAll, selectCamera,
+            searchRecordings, playRecording, downloadRec,
+            window
+        };
+    }
+}).mount('#app');
+</script>
+</body>
+</html>
