@@ -335,8 +335,11 @@ ptt_manager = ConnectionManager()
 # ====== 設備即時狀態 (記憶體) ======
 devices_state: dict = {}
 
-# PTT 音訊緩衝區
+# PTT 音訊緩衝區（STT 用）
 ptt_buffers: dict = {}
+
+# v1 API 即時音訊訂閱佇列：device_id → set of asyncio.Queue
+_audio_ws_queues: dict = {}
 
 # ====== MQTT ======
 mqtt_client  = mqtt.Client()
@@ -424,6 +427,19 @@ def on_mqtt_message(client, userdata, msg):
                 ptt_manager.broadcast({"topic": topic, "payload": payload_b64}),
                 fastapi_loop
             )
+        # 轉發到 v1 API 即時語音訂閱佇列
+        if fastapi_loop and _audio_ws_queues:
+            t_parts  = topic.split('/')
+            dev_id_ptt = t_parts[-1] if len(t_parts) >= 3 else "unknown"
+            if dev_id_ptt in _audio_ws_queues:
+                payload_b64 = base64.b64encode(msg.payload).decode()
+                packet = {"type": "audio", "device_id": dev_id_ptt,
+                          "payload_b64": payload_b64,
+                          "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
+                for q in list(_audio_ws_queues[dev_id_ptt]):
+                    if not q.full():
+                        asyncio.run_coroutine_threadsafe(q.put(packet), fastapi_loop)
+
         # 累積供 STT 分析
         if STT_AVAILABLE and msg.payload and fastapi_loop:
             if topic not in ptt_buffers:
@@ -1899,19 +1915,171 @@ def v1_history_videos(deviceId: str,
     }
 
 @app.get("/api/v1/history/{deviceId}/videos/download")
-def v1_video_download(deviceId: str, tag: str, fmt: str = "avi",
-                      db: Session = Depends(get_db),
-                      current: dict = Depends(get_v1_user)):
-    """下載 NVR 歷史錄影（AVI 壓縮版或 RAW 原始檔）"""
-    from fastapi.responses import RedirectResponse
+async def v1_video_download(deviceId: str, tag: str, fmt: str = "avi",
+                            db: Session = Depends(get_db),
+                            current: dict = Depends(get_v1_user)):
+    """
+    下載 NVR 歷史錄影（透過伺服器代理，合作廠商無需連到內部 NVR IP）。
+    fmt=avi → 壓縮版 AVI；fmt=raw → 原始格式
+    """
+    from fastapi.responses import StreamingResponse as SR
     devices = _get_user_devices(current["username"], current["role"], db)
     if not any(d.device_id == deviceId for d in devices):
         raise _v1_err("FORBIDDEN", f"無此設備 {deviceId} 的存取權限", 403)
+
     cfg  = _get_nvr_cfg()
     auth = _nvr_auth_b64(cfg)
     base = _nvr_base_url(cfg)
     cgi  = "BackupMedia.cgi" if fmt == "raw" else "GetAVIMedia.cgi"
-    return RedirectResponse(f"{base}/{cgi}?{urllib.parse.urlencode({'Tag': tag, 'Auth': auth})}")
+    nvr_url = f"{base}/{cgi}?{urllib.parse.urlencode({'Tag': tag, 'Auth': auth})}"
+    ext  = "raw" if fmt == "raw" else "avi"
+    filename = f"{deviceId}_{tag}.{ext}".replace(" ", "_").replace(":", "-")
+
+    if not AIOHTTP_AVAILABLE:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(nvr_url)
+
+    sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(connect=15, total=None))
+    try:
+        resp = await sess.get(nvr_url)
+        if resp.status != 200:
+            await resp.release(); await sess.close()
+            raise _v1_err("NVR_ERROR", f"NVR 回應 {resp.status}", 502)
+        ct = resp.headers.get("Content-Type", "video/avi")
+
+        async def gen():
+            try:
+                async for chunk in resp.content.iter_chunked(65536):
+                    yield chunk
+            except (asyncio.CancelledError, Exception):
+                pass
+            finally:
+                try: resp.release()
+                except Exception: pass
+                try: await sess.close()
+                except Exception: pass
+
+        return SR(gen(), media_type=ct,
+                  headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    except HTTPException:
+        await sess.close(); raise
+    except Exception as e:
+        await sess.close()
+        raise _v1_err("NVR_ERROR", f"下載代理失敗: {e}", 502)
+
+# ── Module 3: Live — 即時語音 WebSocket ───────────────────────────────
+
+@app.websocket("/api/v1/live/{deviceId}/audio/ws")
+async def v1_audio_ws(deviceId: str, websocket: WebSocket, token: str = ""):
+    """
+    即時 PTT 語音 WebSocket。
+    連線方式：ws://host/api/v1/live/{deviceId}/audio/ws?token=JWT
+    收到的訊息格式：
+      {"type": "audio", "device_id": "...", "payload_b64": "<base64 PCM>", "timestamp": "..."}
+      {"type": "ping"}   ← 每 30 秒心跳，客戶端不需回應
+    PCM 格式：8000 Hz, 16-bit, mono（解碼後可播放或轉換為 WAV）
+    """
+    # ── 認證 ──
+    user = None
+    if token:
+        if JWT_AVAILABLE and token.count(".") == 2:
+            try:
+                user = _decode_jwt(token)
+            except HTTPException:
+                pass
+        if user is None:
+            user = _sessions.get(token)
+    if not user:
+        await websocket.close(code=4001, reason="Unauthorized: invalid token")
+        return
+
+    # ── 設備存取權檢查 ──
+    db = SessionLocal()
+    try:
+        devices = _get_user_devices(user["username"], user["role"], db)
+        if not any(d.device_id == deviceId for d in devices):
+            await websocket.close(code=4003, reason="Forbidden: no access to device")
+            return
+    finally:
+        db.close()
+
+    await websocket.accept()
+
+    # ── 建立佇列並加入訂閱 ──
+    queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+    _audio_ws_queues.setdefault(deviceId, set()).add(queue)
+    try:
+        await websocket.send_json({"type": "connected", "device_id": deviceId,
+                                   "message": "即時語音串流已建立"})
+        while True:
+            try:
+                packet = await asyncio.wait_for(queue.get(), timeout=30.0)
+                await websocket.send_json(packet)
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "ping"})
+            except Exception:
+                break
+    except Exception:
+        pass
+    finally:
+        _audio_ws_queues.get(deviceId, set()).discard(queue)
+
+# ── Device ↔ NVR Channel 對應設定 ─────────────────────────────────────
+
+@app.put("/api/v1/devices/{deviceId}/nvr_channel")
+def v1_set_nvr_channel(deviceId: str, data: dict,
+                        db: Session = Depends(get_db),
+                        _u: dict = Depends(require_v1_admin)):
+    """
+    設定 PTT 設備對應的 NVR 攝影機頻道（Admin 權限）。
+    這個設定決定了 /stream、/videos 等 API 要讀哪一路 NVR 畫面。
+
+    Body: {"channel": 0, "name": "車牌 AAA-1234"}
+    channel：NVR 頻道號碼（從 0 開始）
+    """
+    channel = data.get("channel")
+    if channel is None:
+        raise _v1_err("INVALID_PARAMS", "需要提供 channel 欄位（整數，從 0 開始）")
+    channel = int(channel)
+
+    cfg = _get_nvr_cfg()
+    mjpeg_url = (f"http://{cfg.ip}:{cfg.http_port}/mjpeg_stream.cgi"
+                 f"?Auth={_nvr_auth_b64(cfg)}&ch={channel}&metadata=0")
+
+    dev = db.query(Device).filter(Device.device_id == deviceId).first()
+    if not dev:
+        dev = Device(device_id=deviceId,
+                     name=data.get("name", deviceId),
+                     mjpeg_url=mjpeg_url)
+        db.add(dev)
+    else:
+        dev.mjpeg_url = mjpeg_url
+        if data.get("name"):
+            dev.name = data["name"]
+    db.commit()
+
+    return {
+        "message":   f"設備 {deviceId} 已對應至 NVR CH{channel}",
+        "device_id": deviceId,
+        "channel":   channel,
+        "mjpeg_url": mjpeg_url,
+        "rtsp_url":  (f"rtsp://{cfg.username}:{cfg.password}"
+                      f"@{cfg.ip}:{cfg.rtsp_port}/ch{channel + 1}")
+    }
+
+@app.get("/api/v1/devices/{deviceId}/nvr_channel")
+def v1_get_nvr_channel(deviceId: str, db: Session = Depends(get_db),
+                        current: dict = Depends(get_v1_user)):
+    """查詢設備目前對應的 NVR 頻道"""
+    dev = db.query(Device).filter(Device.device_id == deviceId).first()
+    if not dev:
+        raise _v1_err("NOT_FOUND", f"找不到設備 {deviceId}", 404)
+    ch = None
+    if dev.mjpeg_url:
+        m = re.search(r"ch=(\d+)", dev.mjpeg_url)
+        if m:
+            ch = int(m.group(1))
+    return {"device_id": deviceId, "name": dev.name, "nvr_channel": ch}
 
 # ====== NVR Viewer 獨立查看器 ======
 # 第三方 / 外部使用者可用 /api/nvrv/login 取得 token
