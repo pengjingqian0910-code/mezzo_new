@@ -53,6 +53,8 @@ jobs:
                 --name mezzo \
                 --restart unless-stopped \
                 -p 5555:80 \
+                -e PUBLIC_URL=http://52.194.210.107:5555 \
+                -e JWT_SECRET=${{ secrets.JWT_SECRET || 'mezzo_eoc_jwt_change_me' }} \
                 -v ~/mezzo_web_system/mezzo_web_system:/app \
                 mezzo:latest
             else
@@ -67,6 +69,8 @@ jobs:
                   --name mezzo \
                   --restart unless-stopped \
                   -p 5555:80 \
+                  -e PUBLIC_URL=http://52.194.210.107:5555 \
+                  -e JWT_SECRET=${{ secrets.JWT_SECRET || 'mezzo_eoc_jwt_change_me' }} \
                   -v ~/mezzo_web_system/mezzo_web_system:/app \
                   mezzo:latest
               fi
