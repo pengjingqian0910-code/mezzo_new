@@ -2,6 +2,7 @@ import asyncio, random, json, os, time, base64, io, uuid, wave, re, secrets
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
+from datetime import timedelta
 import paho.mqtt.client as mqtt
 from datetime import datetime
 try:
@@ -54,6 +55,18 @@ async def _load_whisper_model():
         print("✅ [STT] faster-whisper 模型載入完成，語音辨識已啟用")
     except Exception as _e:
         print(f"⚠️  [STT] 模型載入失敗 ({_e})，STT 功能停用")
+
+# ====== PyJWT（v1 API 認證用）======
+try:
+    import jwt as _pyjwt
+    JWT_AVAILABLE = True
+except ImportError:
+    _pyjwt = None  # type: ignore
+    JWT_AVAILABLE = False
+    print("⚠️  [JWT] PyJWT 未安裝，v1 API JWT 功能停用。請執行: pip install PyJWT")
+
+JWT_SECRET = os.getenv("JWT_SECRET", "mezzo_eoc_jwt_secret_change_me_in_production")
+JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
 
 # ====== aiohttp（MJPEG 代理使用，選裝）======
 try:
@@ -192,7 +205,7 @@ def get_db():
     try: yield db
     finally: db.close()
 
-# ====== Session Token 管理 ======
+# ====== Session Token 管理（Web UI 用）======
 _sessions: dict = {}
 
 def create_session(username: str, role: str) -> str:
@@ -207,6 +220,54 @@ def get_current_user(authorization: Optional[str] = Header(default=None)):
     user = _sessions.get(token)
     if not user:
         raise HTTPException(status_code=401, detail="Token 無效或已過期，請重新登入")
+    return user
+
+# ====== JWT 工具（v1 API 用）======
+def _v1_err(code: str, message: str, status: int = 400):
+    """回傳標準化 v1 API 錯誤"""
+    return HTTPException(status_code=status, detail={
+        "error": code,
+        "message": message,
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    })
+
+def _create_jwt(username: str, role: str) -> str:
+    if not JWT_AVAILABLE:
+        raise _v1_err("SERVER_ERROR", "JWT 模組未安裝", 500)
+    payload = {
+        "sub": username,
+        "role": role,
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRE_HOURS)
+    }
+    return _pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+def _decode_jwt(token: str) -> dict:
+    try:
+        payload = _pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        return {"username": payload["sub"], "role": payload.get("role", "operator")}
+    except _pyjwt.ExpiredSignatureError:
+        raise _v1_err("TOKEN_EXPIRED", "Token 已過期，請重新登入", 401)
+    except Exception:
+        raise _v1_err("INVALID_TOKEN", "Token 無效", 401)
+
+def get_v1_user(authorization: Optional[str] = Header(default=None)):
+    """v1 API 認證：接受 JWT（外部）或 Session Token（內部 Web UI）"""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise _v1_err("UNAUTHORIZED", "需要 Bearer Token", 401)
+    token = authorization[7:]
+    # JWT（三段式 xxx.yyy.zzz）
+    if JWT_AVAILABLE and token.count(".") == 2:
+        return _decode_jwt(token)
+    # Session token 回退（相容 Web UI）
+    user = _sessions.get(token)
+    if user:
+        return user
+    raise _v1_err("UNAUTHORIZED", "Token 無效或已過期", 401)
+
+def require_v1_admin(user: dict = Depends(get_v1_user)):
+    if user["role"] != "admin":
+        raise _v1_err("FORBIDDEN", "需要管理員權限", 403)
     return user
 
 def require_admin(user: dict = Depends(get_current_user)):
@@ -1417,6 +1478,440 @@ async def webrtc_offer_by_device(device_id: str, body: DeviceOfferBody,
     while pc.iceGatheringState != "complete" and elapsed < 10.0:
         await asyncio.sleep(0.1); elapsed += 0.1
     return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type, "pc_id": pc_id}
+
+# ======================================================================
+# EOC Web Service RESTful API  v1.0
+# 路徑前綴：/api/v1/
+# 認證：Bearer JWT（外部合作廠商）或 Session Token（內部 Web UI）
+# ======================================================================
+
+def _v1_device_status(device: Device) -> dict:
+    """組合單一設備的即時狀態"""
+    state = devices_state.get(device.device_id, {})
+    last_ts = state.get("last_real_time", 0)
+    online   = last_ts > 0 and (time.time() - last_ts) <= 300   # 5 分鐘內算在線
+    return {
+        "device_id":      device.device_id,
+        "name":           device.name,
+        "online":         online,
+        "last_heartbeat": (datetime.fromtimestamp(last_ts).strftime("%Y-%m-%dT%H:%M:%SZ")
+                           if last_ts else None),
+        "battery":        state.get("battery", None),
+        "signal_strength": state.get("signal_strength", None),   # MQTT 目前未提供
+        "lat":            state.get("lat", None),
+        "lng":            state.get("lng", None),
+        "status":         state.get("status", "offline" if not online else "online"),
+    }
+
+def _get_user_devices(username: str, role: str, db: Session):
+    """依角色取得使用者可存取的設備列表"""
+    user = db.query(User).filter(User.username == username).first()
+    if not user:
+        return []
+    if role == "admin":
+        return db.query(Device).all()
+    if role == "group_manager":
+        dev_set = set(user.devices)
+        for u in user.managed_users:
+            for d in u.devices:
+                dev_set.add(d)
+        return list(dev_set)
+    return user.devices  # operator
+
+# ── Module 1: Auth ─────────────────────────────────────────────────────
+
+@app.post("/api/v1/auth/login")
+def v1_login(data: dict, db: Session = Depends(get_db)):
+    """取得 Bearer JWT Token（有效期 24 小時）"""
+    user = db.query(User).filter(
+        User.username == data.get("username"),
+        User.password == data.get("password")
+    ).first()
+    if not user:
+        raise _v1_err("INVALID_CREDENTIALS", "帳號或密碼錯誤", 401)
+    token = _create_jwt(user.username, user.role)
+    return {
+        "token":      token,
+        "token_type": "Bearer",
+        "expires_in": JWT_EXPIRE_HOURS * 3600,
+        "username":   user.username,
+        "role":       user.role
+    }
+
+@app.post("/api/v1/users")
+def v1_create_user(data: dict, db: Session = Depends(get_db),
+                   _u: dict = Depends(require_v1_admin)):
+    """建立後台帳號（需 Admin 權限）"""
+    username = (data.get("username") or "").strip()
+    password = (data.get("password") or "").strip()
+    role     = data.get("role", "operator")
+    if not username or not password:
+        raise _v1_err("INVALID_PARAMS", "username / password 不可為空")
+    if role not in ("operator", "group_manager", "admin"):
+        raise _v1_err("INVALID_PARAMS", "role 必須為 operator / group_manager / admin")
+    if db.query(User).filter(User.username == username).first():
+        raise _v1_err("DUPLICATE_USER", f"帳號 {username} 已存在", 409)
+    db.add(User(username=username, password=password,
+                email=data.get("email", ""), role=role))
+    db.commit()
+    return {"message": f"帳號 {username} 建立成功", "username": username, "role": role}
+
+# ── Module 1: Mapping ──────────────────────────────────────────────────
+
+@app.post("/api/v1/mapping/assign")
+def v1_assign_device(data: dict, db: Session = Depends(get_db),
+                     _u: dict = Depends(require_v1_admin)):
+    """將 DeviceID 綁定至指定 UserID（username）"""
+    username  = (data.get("userId") or data.get("username") or "").strip()
+    device_id = (data.get("deviceId") or data.get("device_id") or "").strip()
+    if not username or not device_id:
+        raise _v1_err("INVALID_PARAMS", "userId / deviceId 不可為空")
+    user   = db.query(User).filter(User.username == username).first()
+    if not user:
+        raise _v1_err("NOT_FOUND", f"找不到使用者 {username}", 404)
+    device = db.query(Device).filter(Device.device_id == device_id).first()
+    if not device:
+        raise _v1_err("NOT_FOUND", f"找不到設備 {device_id}", 404)
+    if device not in user.devices:
+        user.devices.append(device)
+        db.commit()
+    return {
+        "message":   f"設備 {device_id} 已綁定至 {username}",
+        "userId":    username,
+        "deviceId":  device_id
+    }
+
+@app.delete("/api/v1/mapping/assign")
+def v1_unassign_device(data: dict, db: Session = Depends(get_db),
+                       _u: dict = Depends(require_v1_admin)):
+    """解除 DeviceID 與 UserID 的綁定"""
+    username  = (data.get("userId") or "").strip()
+    device_id = (data.get("deviceId") or "").strip()
+    user   = db.query(User).filter(User.username == username).first()
+    device = db.query(Device).filter(Device.device_id == device_id).first()
+    if user and device and device in user.devices:
+        user.devices.remove(device)
+        db.commit()
+    return {"message": f"已解除綁定 {device_id} ← {username}"}
+
+@app.get("/api/v1/mapping/devices/{userId}")
+def v1_user_devices(userId: str, db: Session = Depends(get_db),
+                    current: dict = Depends(get_v1_user)):
+    """查詢指定使用者可存取的設備清單"""
+    # operator 只能查自己
+    if current["role"] == "operator" and current["username"] != userId:
+        raise _v1_err("FORBIDDEN", "只能查詢自己的設備清單", 403)
+    devices = _get_user_devices(userId, current["role"] if current["username"] == userId
+                                else "admin", db)
+    return [_v1_device_status(d) for d in devices]
+
+# ── Module 2: Device Status ────────────────────────────────────────────
+
+@app.get("/api/v1/devices/status")
+def v1_devices_status(db: Session = Depends(get_db),
+                      current: dict = Depends(get_v1_user)):
+    """取得登入使用者可存取的所有設備即時狀態"""
+    devices = _get_user_devices(current["username"], current["role"], db)
+    return {
+        "total":   len(devices),
+        "online":  sum(1 for d in devices
+                       if (time.time() - devices_state.get(d.device_id, {})
+                           .get("last_real_time", 0)) <= 300
+                          and devices_state.get(d.device_id, {}).get("last_real_time", 0) > 0),
+        "devices": [_v1_device_status(d) for d in devices],
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    }
+
+# ── Module 3: Live — MQTT subscribe info ──────────────────────────────
+
+@app.get("/api/v1/live/{deviceId}/subscribe")
+def v1_live_subscribe(deviceId: str, db: Session = Depends(get_db),
+                      current: dict = Depends(get_v1_user)):
+    """
+    取得 MQTT Broker 連線資訊與即時訂閱 Topic。
+    合作廠商可直接訂閱這些 Topic 取得即時 GPS / PTT / Alert。
+    """
+    # 驗證使用者有此設備存取權
+    devices = _get_user_devices(current["username"], current["role"], db)
+    if not any(d.device_id == deviceId for d in devices):
+        raise _v1_err("FORBIDDEN", f"無此設備 {deviceId} 的存取權限", 403)
+    cfg = _get_mqtt_cfg()
+    return {
+        "device_id": deviceId,
+        "broker": {
+            "host":     cfg.ip,
+            "port":     cfg.port,
+            "protocol": "mqtt",
+            "note":     "無需認證（公開 Broker）"
+        },
+        "topics": {
+            "gps":   f"/WJI/GPS/{deviceId}",
+            "ptt":   f"/WJI/PTT/{deviceId}",
+            "alert": f"/WJI/PTT/{deviceId}/SOS"
+        },
+        "payload_format": {
+            "gps":   {"device_id": "string", "lat": "float", "lng": "float",
+                      "battery": "int", "status": "string"},
+            "ptt":   "binary PCM audio (8000 Hz, 16-bit, mono)",
+            "alert": "binary — SOS 緊急告警封包"
+        }
+    }
+
+# ── Module 3: Live — WebRTC video stream ──────────────────────────────
+
+@app.get("/api/v1/live/{deviceId}/stream")
+def v1_live_stream(deviceId: str, db: Session = Depends(get_db),
+                   current: dict = Depends(get_v1_user)):
+    """
+    取得即時影像串流資訊。
+    回傳 WebRTC signaling 端點，客戶端需執行 WebRTC offer/answer 交換。
+    同時提供 MJPEG proxy URL 作為備用（低延遲替代方案）。
+    """
+    devices = _get_user_devices(current["username"], current["role"], db)
+    dev = next((d for d in devices if d.device_id == deviceId), None)
+    if not dev:
+        raise _v1_err("FORBIDDEN", f"無此設備 {deviceId} 的存取權限", 403)
+
+    # 找出對應的 NVR channel
+    cfg = _get_nvr_cfg()
+    ch  = None
+    if dev.mjpeg_url:
+        m = re.search(r"ch=(\d+)", dev.mjpeg_url)
+        if m:
+            ch = int(m.group(1))
+
+    base = os.getenv("PUBLIC_URL", "").rstrip("/")  # e.g. http://54.x.x.x
+
+    result = {
+        "device_id": deviceId,
+        "webrtc": {
+            "enabled":      WEBRTC_AVAILABLE,
+            "signaling_url": f"{base}/api/v1/live/{deviceId}/webrtc/offer",
+            "stun_servers": ["stun:stun.l.google.com:19302"],
+            "note": ("POST SDP offer → 取得 SDP answer，再完成 ICE 交換"
+                     if WEBRTC_AVAILABLE else "伺服器未安裝 aiortc，WebRTC 不可用")
+        },
+        "mjpeg_proxy": {
+            "enabled": AIOHTTP_AVAILABLE and ch is not None,
+            "url": (f"{base}/api/nvrv/mjpeg/{ch}" if ch is not None else None),
+            "note": "直接放入 <img src='...'> 即可顯示（需帶 Bearer Token 或 nvrv token）"
+        },
+        "rtsp": {
+            "url": (f"rtsp://{cfg.username}:{cfg.password}@{cfg.ip}:{cfg.rtsp_port}/ch{ch+1}"
+                    if ch is not None else None),
+            "note": "僅限與 NVR 同網段使用"
+        }
+    }
+    return result
+
+@app.post("/api/v1/live/{deviceId}/webrtc/offer")
+async def v1_webrtc_offer(deviceId: str, body: DeviceOfferBody,
+                           db: Session = Depends(get_db),
+                           current: dict = Depends(get_v1_user)):
+    """
+    WebRTC Offer/Answer 交換。
+    客戶端送出 SDP offer，伺服器回傳 SDP answer，完成後影像開始串流。
+    """
+    devices = _get_user_devices(current["username"], current["role"], db)
+    if not any(d.device_id == deviceId for d in devices):
+        raise _v1_err("FORBIDDEN", f"無此設備 {deviceId} 的存取權限", 403)
+    # 複用現有 WebRTC endpoint 邏輯
+    return await webrtc_offer_by_device(deviceId, body, db)
+
+# ── Module 4: History — GPS (GeoJSON) ─────────────────────────────────
+
+@app.get("/api/v1/history/{deviceId}/gps")
+def v1_history_gps(deviceId: str,
+                   start_time: str, end_time: str,
+                   limit: int = 2000,
+                   db: Session = Depends(get_db),
+                   current: dict = Depends(get_v1_user)):
+    """
+    查詢歷史 GPS 軌跡，回傳 GeoJSON FeatureCollection。
+    start_time / end_time 格式：ISO 8601（YYYY-MM-DDTHH:MM:SS 或 YYYY-MM-DD HH:MM:SS）
+    """
+    devices = _get_user_devices(current["username"], current["role"], db)
+    if not any(d.device_id == deviceId for d in devices):
+        raise _v1_err("FORBIDDEN", f"無此設備 {deviceId} 的存取權限", 403)
+
+    # 標準化時間格式（ISO 8601 → YYYY-MM-DD HH:MM:SS）
+    start = start_time.replace("T", " ").replace("Z", "")[:19]
+    end   = end_time.replace("T", " ").replace("Z", "")[:19]
+
+    records = (db.query(GpsRecord)
+               .filter(GpsRecord.device_id == deviceId,
+                       GpsRecord.timestamp >= start,
+                       GpsRecord.timestamp <= end)
+               .order_by(GpsRecord.timestamp.asc())
+               .limit(limit).all())
+
+    features = []
+    for r in records:
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [float(r.lng), float(r.lat)]  # GeoJSON: [lng, lat]
+            },
+            "properties": {
+                "timestamp": r.timestamp,
+                "battery":   r.battery,
+                "status":    r.status,
+                "device_id": r.device_id
+            }
+        })
+
+    # LineString 軌跡線（方便地圖顯示）
+    coords = [[float(r.lng), float(r.lat)] for r in records]
+    line_feature = {
+        "type": "Feature",
+        "geometry": {"type": "LineString", "coordinates": coords},
+        "properties": {"device_id": deviceId, "point_count": len(records)}
+    } if len(coords) >= 2 else None
+
+    return {
+        "type": "FeatureCollection",
+        "device_id":  deviceId,
+        "start_time": start,
+        "end_time":   end,
+        "point_count": len(records),
+        "features":   ([line_feature] if line_feature else []) + features
+    }
+
+# ── Module 4: History — Audio ──────────────────────────────────────────
+
+@app.get("/api/v1/history/{deviceId}/audio")
+def v1_history_audio(deviceId: str,
+                     start_time: str = "", end_time: str = "",
+                     db: Session = Depends(get_db),
+                     current: dict = Depends(get_v1_user)):
+    """查詢歷史語音檔案清單（WAV/MP3），回傳下載網址"""
+    devices = _get_user_devices(current["username"], current["role"], db)
+    if not any(d.device_id == deviceId for d in devices):
+        raise _v1_err("FORBIDDEN", f"無此設備 {deviceId} 的存取權限", 403)
+
+    base = os.getenv("PUBLIC_URL", "").rstrip("/")
+    safe_id = os.path.basename(deviceId)
+    audio_dir = os.path.join(AUDIO_BASE_PATH, safe_id)
+
+    if not os.path.isdir(audio_dir):
+        return {"device_id": deviceId, "total": 0, "files": []}
+
+    files = []
+    for fname in sorted(os.listdir(audio_dir)):
+        if not fname.lower().endswith((".wav", ".mp3", ".raw")):
+            continue
+        fpath = os.path.join(audio_dir, fname)
+        mtime = os.path.getmtime(fpath)
+        ts    = datetime.fromtimestamp(mtime).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # 時間過濾（若有提供）
+        if start_time and ts < start_time.replace(" ", "T")[:19] + "Z":
+            continue
+        if end_time and ts > end_time.replace(" ", "T")[:19] + "Z":
+            continue
+        files.append({
+            "filename":   fname,
+            "timestamp":  ts,
+            "size_bytes": os.path.getsize(fpath),
+            "download_url": f"{base}/api/audio/{safe_id}/{fname}",
+            "format":     fname.rsplit(".", 1)[-1].upper()
+        })
+
+    return {"device_id": deviceId, "total": len(files), "files": files}
+
+# ── Module 4: History — Videos (NVR) ──────────────────────────────────
+
+@app.get("/api/v1/history/{deviceId}/videos")
+def v1_history_videos(deviceId: str,
+                      start_time: str, end_time: str,
+                      db: Session = Depends(get_db),
+                      current: dict = Depends(get_v1_user)):
+    """
+    查詢指定時間段的 NVR 歷史錄影清單，回傳下載網址。
+    時間格式：ISO 8601 或 YYYY-MM-DD HH:MM:SS
+    """
+    devices = _get_user_devices(current["username"], current["role"], db)
+    dev = next((d for d in devices if d.device_id == deviceId), None)
+    if not dev:
+        raise _v1_err("FORBIDDEN", f"無此設備 {deviceId} 的存取權限", 403)
+
+    # 解析設備對應的 NVR channel
+    ch = 0
+    if dev.mjpeg_url:
+        m = re.search(r"ch=(\d+)", dev.mjpeg_url)
+        if m:
+            ch = int(m.group(1))
+
+    # 標準化時間
+    begin = start_time.replace("T", " ").replace("Z", "")[:19]
+    end   = end_time.replace("T", " ").replace("Z", "")[:19]
+
+    cfg  = _get_nvr_cfg()
+    auth = _nvr_auth_b64(cfg)
+    base_url = _nvr_base_url(cfg)
+    pub_base = os.getenv("PUBLIC_URL", "").rstrip("/")
+
+    try:
+        params = urllib.parse.urlencode({
+            "BeginTime": begin, "EndTime": end,
+            "Channels": ch, "Auth": auth
+        }, quote_via=urllib.parse.quote)
+        req = urllib.request.Request(f"{base_url}/GetBackupList.cgi?{params}")
+        req.add_header("Authorization", f"Basic {auth}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+            try:
+                nvr_data = json.loads(raw)
+            except Exception:
+                nvr_data = {}
+    except Exception as e:
+        raise _v1_err("NVR_ERROR", f"無法查詢 NVR 錄影清單: {e}", 502)
+
+    # 解析各種 NVR 回應格式
+    records = (nvr_data if isinstance(nvr_data, list)
+               else nvr_data.get("Backup") or nvr_data.get("Record") or [])
+
+    files = []
+    for rec in records:
+        tag = rec.get("Tag") or rec.get("tag") or rec.get("FileTag") or ""
+        avi_url = (f"{pub_base}/api/v1/history/{deviceId}/videos/download?tag={tag}&fmt=avi"
+                   if tag else None)
+        raw_url = (f"{pub_base}/api/v1/history/{deviceId}/videos/download?tag={tag}&fmt=raw"
+                   if tag else None)
+        files.append({
+            "start_time":    rec.get("StartTime") or rec.get("BeginTime") or begin,
+            "end_time":      rec.get("EndTime") or end,
+            "channel":       ch,
+            "tag":           tag,
+            "download_avi":  avi_url,
+            "download_raw":  raw_url,
+            "playback_url":  f"{pub_base}/api/v1/live/{deviceId}/stream",
+            "format":        "AVI / RAW"
+        })
+
+    return {
+        "device_id":  deviceId,
+        "channel":    ch,
+        "start_time": begin,
+        "end_time":   end,
+        "total":      len(files),
+        "videos":     files
+    }
+
+@app.get("/api/v1/history/{deviceId}/videos/download")
+def v1_video_download(deviceId: str, tag: str, fmt: str = "avi",
+                      db: Session = Depends(get_db),
+                      current: dict = Depends(get_v1_user)):
+    """下載 NVR 歷史錄影（AVI 壓縮版或 RAW 原始檔）"""
+    from fastapi.responses import RedirectResponse
+    devices = _get_user_devices(current["username"], current["role"], db)
+    if not any(d.device_id == deviceId for d in devices):
+        raise _v1_err("FORBIDDEN", f"無此設備 {deviceId} 的存取權限", 403)
+    cfg  = _get_nvr_cfg()
+    auth = _nvr_auth_b64(cfg)
+    base = _nvr_base_url(cfg)
+    cgi  = "BackupMedia.cgi" if fmt == "raw" else "GetAVIMedia.cgi"
+    return RedirectResponse(f"{base}/{cgi}?{urllib.parse.urlencode({'Tag': tag, 'Auth': auth})}")
 
 # ====== NVR Viewer 獨立查看器 ======
 # 第三方 / 外部使用者可用 /api/nvrv/login 取得 token
