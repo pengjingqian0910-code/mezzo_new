@@ -24,57 +24,51 @@ jobs:
           port: 22
           script: |
             set -e
+            export PUBLIC_URL="http://52.194.210.107:5555"
+            export JWT_SECRET="mezzo_eoc_jwt_secret_2026"
 
             # 拉取最新程式碼
             cd ~/mezzo_web_system
             git pull origin main
 
             # 判斷是否需要重新 build image
-            # 只有 Dockerfile / requirements.txt / entrypoint.sh 變動才需要 build
             REBUILD=false
             if git diff HEAD~1 HEAD --name-only 2>/dev/null | grep -qE "Dockerfile|requirements\.txt|entrypoint\.sh"; then
               REBUILD=true
             fi
-
-            # 容器不存在時也需要 build
             if ! docker image inspect mezzo:latest > /dev/null 2>&1; then
               REBUILD=true
             fi
+
+            _docker_run() {
+              docker run -d \
+                --name mezzo \
+                --restart unless-stopped \
+                -p 5555:80 \
+                -e PUBLIC_URL="$PUBLIC_URL" \
+                -e JWT_SECRET="$JWT_SECRET" \
+                -v ~/mezzo_web_system/mezzo_web_system:/app \
+                mezzo:latest
+            }
 
             if [ "$REBUILD" = "true" ]; then
               echo ">>> 偵測到 Dockerfile/requirements 變動，重新 build image..."
               cd ~/mezzo_web_system/mezzo_web_system
               docker build -t mezzo:latest .
-
-              # 重新建立容器（含 volume 掛載）
               docker stop mezzo 2>/dev/null || true
               docker rm   mezzo 2>/dev/null || true
-              docker run -d \
-                --name mezzo \
-                --restart unless-stopped \
-                -p 5555:80 \
-                -e PUBLIC_URL=http://52.194.210.107:5555 \
-                -e JWT_SECRET=${{ secrets.JWT_SECRET || 'mezzo_eoc_jwt_change_me' }} \
-                -v ~/mezzo_web_system/mezzo_web_system:/app \
-                mezzo:latest
+              _docker_run
             else
-              echo ">>> 程式碼異動，重啟容器即可（volume 掛載，無需重新 build）..."
-              # 容器不存在時改用 run
-              if docker ps -a --format '{{.Names}}' | grep -q '^mezzo$'; then
+              echo ">>> 程式碼異動，重啟容器即可..."
+              CONTAINER_EXISTS=$(docker ps -a --filter "name=^mezzo$" --format "yes" 2>/dev/null || echo "no")
+              if [ "$CONTAINER_EXISTS" = "yes" ]; then
                 docker restart mezzo
               else
                 cd ~/mezzo_web_system/mezzo_web_system
                 docker build -t mezzo:latest .
-                docker run -d \
-                  --name mezzo \
-                  --restart unless-stopped \
-                  -p 5555:80 \
-                  -e PUBLIC_URL=http://52.194.210.107:5555 \
-                  -e JWT_SECRET=${{ secrets.JWT_SECRET || 'mezzo_eoc_jwt_change_me' }} \
-                  -v ~/mezzo_web_system/mezzo_web_system:/app \
-                  mezzo:latest
+                _docker_run
               fi
             fi
 
             echo "✅ 部署完成"
-            docker ps | grep mezzo
+            docker ps --filter "name=mezzo" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
