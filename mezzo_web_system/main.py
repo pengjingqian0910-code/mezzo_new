@@ -24,8 +24,11 @@ MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "118.163.141.80")
 MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", "1688"))
 MQTT_TOPIC       = os.getenv("MQTT_TOPIC", "/WJI/PTT/#")
 NVR_HOST         = os.getenv("NVR_HOST", "118.163.141.80")
-NVR_AUTH         = os.getenv("NVR_AUTH", "YWRtaW46MTIzNA==")  # base64(admin:1234)
+NVR_AUTH         = os.getenv("NVR_AUTH", "QWRtaW46MTIzNA==")  # base64(Admin:1234)
 AUDIO_BASE_PATH  = os.getenv("AUDIO_BASE_PATH", "static/audio")
+NVR_MEDIA_PATH   = os.getenv("NVR_MEDIA_PATH", r"C:\Media")
+TAK_SERVER_HOST  = os.getenv("TAK_SERVER_HOST", "")
+TAK_SERVER_PORT  = int(os.getenv("TAK_SERVER_PORT", "8087"))
 
 os.makedirs(AUDIO_BASE_PATH, exist_ok=True)
 
@@ -43,7 +46,7 @@ STT_AVAILABLE  = False
 async def _load_whisper_model():
     global _whisper_model, STT_AVAILABLE
     if not _WHISPER_IMPORT_OK:
-        print("⚠️  [STT] faster-whisper 未安裝，STT 功能停用")
+        print("[STT] faster-whisper not installed, STT disabled")
         return
     try:
         import concurrent.futures
@@ -52,9 +55,9 @@ async def _load_whisper_model():
             return _WhisperModelClass("base", device="cpu", compute_type="int8")
         _whisper_model = await loop.run_in_executor(None, _load)
         STT_AVAILABLE = True
-        print("✅ [STT] faster-whisper 模型載入完成，語音辨識已啟用")
+        print("[STT] faster-whisper model loaded, STT enabled")
     except Exception as _e:
-        print(f"⚠️  [STT] 模型載入失敗 ({_e})，STT 功能停用")
+        print(f"[STT] model load failed ({_e}), STT disabled")
 
 # ====== PyJWT（v1 API 認證用）======
 try:
@@ -63,7 +66,7 @@ try:
 except ImportError:
     _pyjwt = None  # type: ignore
     JWT_AVAILABLE = False
-    print("⚠️  [JWT] PyJWT 未安裝，v1 API JWT 功能停用。請執行: pip install PyJWT")
+    print("[JWT] PyJWT not installed, v1 API JWT disabled. Run: pip install PyJWT")
 
 JWT_SECRET = os.getenv("JWT_SECRET", "mezzo_eoc_jwt_secret_change_me_in_production")
 JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
@@ -75,7 +78,7 @@ try:
 except ImportError:
     aiohttp = None  # type: ignore
     AIOHTTP_AVAILABLE = False
-    print("⚠️  [aiohttp] 未安裝，MJPEG 代理功能停用。請執行: pip install aiohttp")
+    print("[aiohttp] not installed, MJPEG proxy disabled. Run: pip install aiohttp")
 
 # ====== WebRTC 相依套件（選裝）======
 try:
@@ -84,12 +87,12 @@ try:
     from aiortc.mediastreams import VideoStreamTrack
     WEBRTC_AVAILABLE = AIOHTTP_AVAILABLE  # WebRTC 也需要 aiohttp
     if WEBRTC_AVAILABLE:
-        print("✅ [WebRTC] aiortc 載入成功，WebRTC 模組已啟用")
+        print("[WebRTC] aiortc loaded, WebRTC enabled")
     else:
-        print("⚠️  [WebRTC] 需要 aiohttp，WebRTC 功能停用")
+        print("[WebRTC] aiohttp required, WebRTC disabled")
 except ImportError:
     WEBRTC_AVAILABLE = False
-    print("⚠️  [WebRTC] 未安裝 aiortc，WebRTC 功能停用。請執行: pip install aiortc aiohttp")
+    print("[WebRTC] aiortc not installed, WebRTC disabled. Run: pip install aiortc aiohttp")
 
 # ====== 資料庫 ======
 SQLALCHEMY_DATABASE_URL = "sqlite:///./mezzo.db"
@@ -132,10 +135,10 @@ class Geofence(Base):
 class NVRConfig(Base):
     __tablename__ = 'nvr_config'
     id        = Column(Integer, primary_key=True)
-    ip        = Column(String,  default='118.163.141.80')
+    ip        = Column(String,  default='127.0.0.1')
     http_port = Column(Integer, default=80)
-    rtsp_port = Column(Integer, default=1554)
-    username  = Column(String,  default='admin')
+    rtsp_port = Column(Integer, default=2554)
+    username  = Column(String,  default='Admin')
     password  = Column(String,  default='1234')
 
 class MqttConfig(Base):
@@ -154,6 +157,14 @@ class SocialMediaConfig(Base):
     public_url     = Column(String,  default="")
     stt_keyword    = Column(String,  default="影像傳送")
     is_enabled     = Column(Boolean, default=False)
+
+class TakServerConfig(Base):
+    __tablename__ = 'tak_server_config'
+    id         = Column(Integer, primary_key=True)
+    host       = Column(String,  default='')
+    port       = Column(Integer, default=8087)
+    enabled    = Column(Boolean, default=False)
+    callsign   = Column(String,  default='Mezzo-EOC')
 
 class GpsRecord(Base):
     __tablename__ = 'gps_records'
@@ -204,6 +215,144 @@ def get_db():
     db = SessionLocal()
     try: yield db
     finally: db.close()
+
+# ====== TAK TCP Server（供 ATAK 客戶端連線）======
+TAK_TCP_PORT = int(os.getenv("TAK_TCP_PORT", "8087"))
+_tak_clients: list = []  # list of asyncio.StreamWriter
+
+async def _tak_tcp_handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    addr = writer.get_extra_info('peername')
+    print(f"[TAK] ATAK connected from {addr}")
+    _tak_clients.append(writer)
+    try:
+        while True:
+            data = await reader.read(4096)
+            if not data:
+                break
+    except Exception:
+        pass
+    finally:
+        _tak_clients.remove(writer)
+        try: writer.close()
+        except Exception: pass
+        print(f"[TAK] ATAK disconnected {addr}")
+
+async def _start_tak_tcp_server():
+    server = await asyncio.start_server(_tak_tcp_handler, "0.0.0.0", TAK_TCP_PORT)
+    print(f"[TAK] TCP server listening on port {TAK_TCP_PORT}")
+    async with server:
+        await server.serve_forever()
+
+async def broadcast_cot_to_atak(xml: str):
+    """把 CoT XML 推送給所有已連線的 ATAK 客戶端"""
+    data = xml.encode('utf-8')
+    dead = []
+    for writer in list(_tak_clients):
+        try:
+            writer.write(data)
+            await writer.drain()
+        except Exception:
+            dead.append(writer)
+    for w in dead:
+        try: _tak_clients.remove(w)
+        except ValueError: pass
+
+# ====== TAK / CoT 模組 ======
+def _tak_cfg() -> TakServerConfig:
+    db = SessionLocal()
+    cfg = db.query(TakServerConfig).first()
+    db.close()
+    return cfg
+
+def _cot_time(dt: datetime, stale_minutes: int = 5) -> tuple:
+    fmt = "%Y-%m-%dT%H:%M:%S.00Z"
+    t = dt.strftime(fmt)
+    s = (dt + timedelta(minutes=stale_minutes)).strftime(fmt)
+    return t, s
+
+def build_gps_cot(device_id: str, lat: float, lon: float,
+                  battery: int = 0, callsign: str = "") -> str:
+    now = datetime.utcnow()
+    t, stale = _cot_time(now)
+    cs = callsign or device_id
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<event version="2.0" uid="{device_id}" type="a-f-G-U-C" how="m-g"'
+        f' time="{t}" start="{t}" stale="{stale}">'
+        f'<point lat="{lat}" lon="{lon}" hae="0" ce="9999999" le="9999999"/>'
+        f'<detail>'
+        f'<contact callsign="{cs}"/>'
+        f'<remarks>battery={battery}</remarks>'
+        f'</detail>'
+        f'</event>'
+    )
+
+def build_video_cot(uid: str, alias: str, address: str,
+                    rtsp_port: int, channel: int,
+                    lat: float = 0.0, lon: float = 0.0) -> str:
+    now = datetime.utcnow()
+    t, stale = _cot_time(now, stale_minutes=60)
+    path = f"/ch{channel}"
+    rtsp_url = f"rtsp://{address}:{rtsp_port}{path}"
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<event version="2.0" uid="{uid}" type="b-i-v" how="h-e"'
+        f' time="{t}" start="{t}" stale="{stale}">'
+        f'<point lat="{lat}" lon="{lon}" hae="0" ce="9999999" le="9999999"/>'
+        f'<detail>'
+        f'<__video uid="{uid}" url="{rtsp_url}"/>'
+        f'<ConnectionEntry networkTimeout="12000" uid="{uid}"'
+        f' path="{path}" protocol="raw" address="{address}" port="{rtsp_port}"'
+        f' roverPort="-1" remotePath="" bufferTime="-1" rtspReliable="0"'
+        f' ignoreEmbeddedKLV="false" alias="{alias}"/>'
+        f'</detail>'
+        f'</event>'
+    )
+
+ATAK_MULTICAST_GROUP = "239.2.3.1"
+ATAK_MULTICAST_PORT  = 6969
+
+async def send_cot_udp(xml: str, host: str = ATAK_MULTICAST_GROUP,
+                       port: int = ATAK_MULTICAST_PORT) -> bool:
+    import socket, struct
+    try:
+        data = xml.encode('utf-8')
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 32)
+        sock.sendto(data, (host, port))
+        sock.close()
+        return True
+    except Exception as e:
+        print(f"[TAK] UDP send failed ({host}:{port}): {e}")
+        return False
+
+async def send_cot(xml: str, host: str, port: int) -> bool:
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=5
+        )
+        writer.write(xml.encode('utf-8'))
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+        return True
+    except Exception as e:
+        print(f"[TAK] TCP send failed ({host}:{port}): {e}")
+        return False
+
+async def forward_gps_to_tak(device_id: str, lat: float, lon: float, battery: int):
+    cfg = _tak_cfg()
+    if not cfg or not cfg.enabled:
+        return
+    xml = build_gps_cot(device_id, lat, lon, battery, cfg.callsign)
+    # 推給所有已連線的 ATAK TCP 客戶端
+    if _tak_clients:
+        await broadcast_cot_to_atak(xml)
+    # UDP multicast（ATAK 直接收，不需要 TAK Server）
+    await send_cot_udp(xml)
+    # 如果有設 TAK Server host，也走 TCP
+    if cfg.host:
+        await send_cot(xml, cfg.host, cfg.port)
 
 # ====== Session Token 管理（Web UI 用）======
 _sessions: dict = {}
@@ -347,7 +496,7 @@ fastapi_loop = None
 
 def on_mqtt_connect(client, userdata, flags, rc):
     cfg = _get_mqtt_cfg()
-    print(f"🟢 [MQTT] 連線至 {cfg.ip}:{cfg.port}，rc={rc}")
+    print(f"[MQTT] connected to {cfg.ip}:{cfg.port}, rc={rc}")
     client.subscribe("WJI/PTT/#")
     client.subscribe("WJI/GPS/#")
     client.subscribe("/WJI/PTT/#")
@@ -391,8 +540,12 @@ def on_mqtt_message(client, userdata, msg):
                         _save_gps_record(dev_id, lat, lng, battery, status, source="mqtt"),
                         fastapi_loop
                     )
+                    asyncio.run_coroutine_threadsafe(
+                        forward_gps_to_tak(dev_id, lat, lng, battery),
+                        fastapi_loop
+                    )
         except Exception as e:
-            print(f"⚠️  [MQTT GPS] 例外: {e}")
+            print(f"[MQTT GPS] exception: {e}")
 
     # 2. PTT 封包
     elif topic.startswith("WJI/PTT/"):
@@ -418,7 +571,7 @@ def on_mqtt_message(client, userdata, msg):
                             "channel": channel, "lat": lat, "lng": lng, "timestamp": ts
                         }}), fastapi_loop)
             except Exception as e:
-                print(f"⚠️  [MQTT SOS] 例外: {e}")
+                print(f"[MQTT SOS] exception: {e}")
 
         # PTT 音訊代理
         if fastapi_loop and ptt_manager.active_connections:
@@ -716,7 +869,7 @@ def auto_init_db():
             u, p = auth_dec.split(':', 1)
         except Exception:
             u, p = 'admin', '1234'
-        db.add(NVRConfig(ip=NVR_HOST, http_port=80, rtsp_port=1554, username=u, password=p))
+        db.add(NVRConfig(ip=NVR_HOST, http_port=80, rtsp_port=2554, username=u, password=p))
         db.commit()
     # 初始化 MqttConfig（從環境變數）
     if not db.query(MqttConfig).first():
@@ -725,6 +878,10 @@ def auto_init_db():
     # 初始化 SocialMediaConfig
     if not db.query(SocialMediaConfig).first():
         db.add(SocialMediaConfig())
+        db.commit()
+    # 初始化 TakServerConfig
+    if not db.query(TakServerConfig).first():
+        db.add(TakServerConfig(host=TAK_SERVER_HOST, port=TAK_SERVER_PORT, enabled=bool(TAK_SERVER_HOST)))
         db.commit()
     # 遷移 ptt_records 表（增加 text_zh / text_en 欄位）
     try:
@@ -756,13 +913,14 @@ async def startup_event():
     asyncio.create_task(telemetry_broadcaster())
     asyncio.create_task(mqtt_stt_worker())
     asyncio.create_task(_load_whisper_model())
+    asyncio.create_task(_start_tak_tcp_server())
     try:
         mqtt_cfg = _get_mqtt_cfg()
         mqtt_client.connect(mqtt_cfg.ip, mqtt_cfg.port, 60)
         mqtt_client.loop_start()
-        print(f"🔌 [MQTT] 嘗試連線至 {mqtt_cfg.ip}:{mqtt_cfg.port}")
+        print(f"[MQTT] connecting to {mqtt_cfg.ip}:{mqtt_cfg.port}")
     except Exception as e:
-        print(f"❌ [MQTT] 連線失敗: {e}")
+        print(f"[MQTT] connection failed: {e}")
 
 # ====== Auth & User APIs ======
 @app.post("/api/login")
@@ -967,6 +1125,97 @@ def mqtt_reconnect_api(_user: dict = Depends(require_admin)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ====== TAK Server APIs ======
+@app.get("/api/tak/config")
+def get_tak_config(_user: dict = Depends(get_current_user)):
+    cfg = _tak_cfg()
+    if not cfg:
+        return {"host": "", "port": 8087, "enabled": False, "callsign": "Mezzo-EOC"}
+    return {"host": cfg.host, "port": cfg.port, "enabled": cfg.enabled, "callsign": cfg.callsign}
+
+class TakConfigBody(BaseModel):
+    host: str
+    port: int = 8087
+    enabled: bool = False
+    callsign: str = "Mezzo-EOC"
+
+@app.put("/api/tak/config")
+def update_tak_config(body: TakConfigBody, db: Session = Depends(get_db),
+                      _user: dict = Depends(get_current_user)):
+    cfg = db.query(TakServerConfig).first()
+    if not cfg:
+        cfg = TakServerConfig(); db.add(cfg)
+    cfg.host = body.host; cfg.port = body.port
+    cfg.enabled = body.enabled; cfg.callsign = body.callsign
+    db.commit()
+    return {"msg": "TAK Server 設定已儲存"}
+
+@app.post("/api/tak/push_video")
+async def tak_push_video(_user: dict = Depends(get_current_user),
+                         db: Session = Depends(get_db)):
+    """將 NVR 所有頻道的 RTSP URL 推送至 TAK Server 作為 Video Link"""
+    tak_cfg = _tak_cfg()
+    if not tak_cfg or not tak_cfg.enabled or not tak_cfg.host:
+        raise HTTPException(400, "TAK Server 未啟用，請先在設定中填寫 host 並開啟")
+    nvr_cfg = db.query(NVRConfig).first()
+    if not nvr_cfg:
+        raise HTTPException(400, "NVR 尚未設定")
+    results = []
+    # 取攝影機清單決定頻道數
+    try:
+        base = f"http://{nvr_cfg.ip}:{nvr_cfg.http_port}"
+        auth = base64.b64decode(NVR_AUTH).decode() if NVR_AUTH else f"{nvr_cfg.username}:{nvr_cfg.password}"
+        auth_b64 = base64.b64encode(auth.encode()).decode()
+        req = urllib.request.Request(f"{base}/CameraList.cgi")
+        req.add_header("Authorization", f"Basic {auth_b64}")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            cameras = json.loads(resp.read().decode())
+    except Exception as e:
+        cameras = [{"Ch": str(i)} for i in range(1, 4)]
+    for cam in cameras:
+        ch = int(cam.get("channelID", cam.get("Ch", cam.get("ch", 0))))
+        uid = f"NVR-CH{ch}"
+        alias = cam.get("desc", cam.get("Name", cam.get("name", f"Camera {ch}")))
+        xml = build_video_cot(uid, alias, nvr_cfg.ip, nvr_cfg.rtsp_port, ch)
+        ok = await send_cot_udp(xml)
+        if tak_cfg.host:
+            ok = await send_cot(xml, tak_cfg.host, tak_cfg.port) or ok
+        results.append({"channel": ch, "uid": uid, "alias": alias, "sent": ok})
+    return {"pushed": len(results), "results": results}
+
+@app.post("/api/tak/test_send")
+async def tak_test_send(lat: float = 25.0, lon: float = 121.5,
+                        callsign: str = "TEST-MEZZO",
+                        _user: dict = Depends(get_current_user)):
+    """送一筆測試 CoT GPS 到 UDP multicast，用來驗證 ATAK 能否收到"""
+    xml = build_gps_cot("TEST-MEZZO-001", lat, lon, 100, callsign)
+    ok_udp = await send_cot_udp(xml)
+    ok_tcp = False
+    if _tak_clients:
+        await broadcast_cot_to_atak(xml)
+        ok_tcp = True
+    return {"sent_udp": ok_udp, "sent_tcp": ok_tcp,
+            "atak_clients_connected": len(_tak_clients),
+            "lat": lat, "lon": lon, "callsign": callsign,
+            "multicast": f"{ATAK_MULTICAST_GROUP}:{ATAK_MULTICAST_PORT}",
+            "xml_preview": xml[:200]}
+
+@app.get("/api/tak/status")
+async def tak_status(_user: dict = Depends(get_current_user)):
+    """測試與 TAK Server 的 TCP 連線"""
+    cfg = _tak_cfg()
+    if not cfg or not cfg.host:
+        return {"connected": False, "reason": "未設定 TAK Server host"}
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(cfg.host, cfg.port), timeout=5
+        )
+        writer.close()
+        await writer.wait_closed()
+        return {"connected": True, "host": cfg.host, "port": cfg.port}
+    except Exception as e:
+        return {"connected": False, "host": cfg.host, "port": cfg.port, "reason": str(e)}
+
 # ====== NVR 即時 APIs ======
 @app.get("/api/nvr/server_info")
 def get_nvr_server_info():
@@ -1088,35 +1337,283 @@ def download_nvr_raw(tag: str):
     return RedirectResponse(url=f"{base}/BackupMedia.cgi?{params}")
 
 @app.get("/api/nvr/live_stream/{channel}")
-def get_nvr_live_stream(channel: int):
-    from fastapi.responses import RedirectResponse
+async def get_nvr_live_stream(channel: int):
+    from fastapi.responses import StreamingResponse
     cfg  = _get_nvr_cfg()
     auth = _nvr_auth_b64(cfg)
     base = _nvr_base_url(cfg)
-    params = urllib.parse.urlencode({"Auth": auth, "ch": channel, "metadata": "0"})
-    return RedirectResponse(url=f"{base}/mjpeg_stream.cgi?{params}")
+    nvr_url = f"{base}/mjpeg_stream.cgi?Auth={auth}&ch={channel}&metadata=0"
+    sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(connect=10, total=None))
+    try:
+        resp = await sess.get(nvr_url, headers={"Authorization": f"Basic {auth}"})
+        if resp.status != 200:
+            await resp.release(); await sess.close()
+            raise HTTPException(502, f"NVR MJPEG 回應 {resp.status}")
+        ct = resp.headers.get("Content-Type", "multipart/x-mixed-replace; boundary=ipcamera")
+        async def gen():
+            try:
+                async for chunk in resp.content.iter_chunked(8192):
+                    yield chunk
+            except (asyncio.CancelledError, Exception):
+                pass
+            finally:
+                try: resp.release()
+                except Exception: pass
+                try: await sess.close()
+                except Exception: pass
+        return StreamingResponse(gen(), media_type=ct,
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    except HTTPException:
+        await sess.close(); raise
+    except Exception as e:
+        await sess.close()
+        raise HTTPException(502, f"MJPEG 即時串流代理失敗: {e}")
 
 @app.get("/api/nvr/playback_stream/{channel}")
-def get_nvr_playback_stream(channel: int, time: str):
-    from fastapi.responses import RedirectResponse
+async def get_nvr_playback_stream(channel: int, time: str):
+    from fastapi.responses import StreamingResponse
     cfg  = _get_nvr_cfg()
     auth = _nvr_auth_b64(cfg)
     base = _nvr_base_url(cfg)
-    params = urllib.parse.urlencode({
-        "Auth": auth, "ch": channel, "clientid": "web",
-        "playback": urllib.parse.quote(time)
-    })
-    return RedirectResponse(url=f"{base}/mjpeg_stream.cgi?{params}")
+    params = urllib.parse.urlencode({"Auth": auth, "ch": channel, "clientid": "web",
+                                     "playback": time}, quote_via=urllib.parse.quote)
+    nvr_url = f"{base}/mjpeg_stream.cgi?{params}"
+    sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(connect=10, total=None))
+    try:
+        resp = await sess.get(nvr_url, headers={"Authorization": f"Basic {auth}"})
+        if resp.status != 200:
+            await resp.release(); await sess.close()
+            raise HTTPException(502, f"NVR 回放回應 {resp.status}")
+        ct = resp.headers.get("Content-Type", "multipart/x-mixed-replace; boundary=ipcamera")
+        async def gen():
+            try:
+                async for chunk in resp.content.iter_chunked(8192):
+                    yield chunk
+            except (asyncio.CancelledError, Exception):
+                pass
+            finally:
+                try: resp.release()
+                except Exception: pass
+                try: await sess.close()
+                except Exception: pass
+        return StreamingResponse(gen(), media_type=ct,
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    except HTTPException:
+        await sess.close(); raise
+    except Exception as e:
+        await sess.close()
+        raise HTTPException(502, f"MJPEG 回放串流代理失敗: {e}")
+
+@app.get("/api/nvr/fmp4_stream/{channel}")
+async def get_nvr_fmp4_stream(channel: int):
+    """FMP4 即時串流代理（解決 CORS 問題，供 fmp4_stream_player_module.js 使用）"""
+    from fastapi.responses import StreamingResponse
+    cfg  = _get_nvr_cfg()
+    auth = _nvr_auth_b64(cfg)
+    base = _nvr_base_url(cfg)
+    nvr_url = f"{base}/fmp4_stream.cgi?ch={channel}&Auth={urllib.parse.quote(auth)}"
+
+    if not AIOHTTP_AVAILABLE:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(nvr_url)
+
+    sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(connect=10, total=None))
+    try:
+        resp = await sess.get(nvr_url, headers={"Authorization": f"Basic {auth}"})
+        if resp.status != 200:
+            await resp.release(); await sess.close()
+            raise HTTPException(502, f"NVR FMP4 串流回應 {resp.status}")
+
+        async def gen():
+            try:
+                async for chunk in resp.content.iter_chunked(32768):
+                    yield chunk
+            except (asyncio.CancelledError, Exception):
+                pass
+            finally:
+                try: resp.release()
+                except Exception: pass
+                try: await sess.close()
+                except Exception: pass
+
+        return StreamingResponse(gen(), media_type="video/mp4",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    except HTTPException:
+        await sess.close(); raise
+    except Exception as e:
+        await sess.close()
+        raise HTTPException(502, f"FMP4 即時串流代理失敗: {e}")
+
+@app.get("/api/nvr/fmp4_playback/{channel}")
+async def get_nvr_fmp4_playback(channel: int, t: int):
+    """FMP4 回放串流代理（t = Unix timestamp 秒）"""
+    from fastapi.responses import StreamingResponse
+    cfg  = _get_nvr_cfg()
+    auth = _nvr_auth_b64(cfg)
+    base = _nvr_base_url(cfg)
+    nvr_url = (f"{base}/fmp4_stream.cgi"
+               f"?ch={channel}&Auth={urllib.parse.quote(auth)}&playback=1&t={t}")
+
+    if not AIOHTTP_AVAILABLE:
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(nvr_url)
+
+    sess = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(connect=10, total=None))
+    try:
+        resp = await sess.get(nvr_url, headers={"Authorization": f"Basic {auth}"})
+        if resp.status != 200:
+            await resp.release(); await sess.close()
+            raise HTTPException(502, f"NVR FMP4 回放回應 {resp.status}")
+
+        async def gen():
+            try:
+                async for chunk in resp.content.iter_chunked(32768):
+                    yield chunk
+            except (asyncio.CancelledError, Exception):
+                pass
+            finally:
+                try: resp.release()
+                except Exception: pass
+                try: await sess.close()
+                except Exception: pass
+
+        return StreamingResponse(gen(), media_type="video/mp4",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    except HTTPException:
+        await sess.close(); raise
+    except Exception as e:
+        await sess.close()
+        raise HTTPException(502, f"FMP4 回放串流代理失敗: {e}")
 
 @app.get("/api/nvr/snapshot/{channel}")
-def get_nvr_snapshot(channel: int, time: str = ""):
-    from fastapi.responses import RedirectResponse
+async def get_nvr_snapshot(channel: int, time: str = ""):
+    from fastapi.responses import Response
     cfg  = _get_nvr_cfg()
     auth = _nvr_auth_b64(cfg)
     base = _nvr_base_url(cfg)
-    params = {"Ch": channel, "Auth": auth}
-    if time: params["Time"] = time
-    return RedirectResponse(url=f"{base}/Snapshot.cgi?{urllib.parse.urlencode(params)}")
+    time_part = f"&Time={urllib.parse.quote(time)}" if time else ""
+    nvr_url = f"{base}/Snapshot.cgi?Ch={channel}&Auth={auth}{time_part}"
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=8)) as sess:
+            async with sess.get(nvr_url, headers={"Authorization": f"Basic {auth}"}) as resp:
+                data = await resp.read()
+                ct = resp.headers.get("Content-Type", "image/jpeg")
+        return Response(content=data, media_type=ct)
+    except Exception as e:
+        raise HTTPException(502, f"Snapshot 代理失敗: {e}")
+
+# ====== NVR 本機磁碟影像 API ======
+@app.get("/api/nvr/local/history")
+def nvr_local_history(ch: int, date: str):
+    """
+    直接掃描本機磁碟列出歷史 AVI 檔案。
+    date 格式：YYYY-MM-DD
+    路徑規則：NVR_MEDIA_PATH/Ch{ch}/{year}/{month}/{day}/
+    """
+    try:
+        year, month, day = date.split("-")
+        month = str(int(month))  # 去掉前導零（1 不是 01）
+        day   = str(int(day))
+    except Exception:
+        raise HTTPException(400, "date 格式錯誤，請用 YYYY-MM-DD")
+
+    dir_path = os.path.join(NVR_MEDIA_PATH, f"Ch{ch}", year, month, day)
+
+    if not os.path.isdir(dir_path):
+        return {"ch": ch, "date": date, "path": dir_path, "total": 0, "files": []}
+
+    files = []
+    for fname in sorted(os.listdir(dir_path)):
+        if not fname.lower().endswith(".avi"):
+            continue
+        fpath = os.path.join(dir_path, fname)
+        size  = os.path.getsize(fpath)
+        files.append({
+            "filename": fname,
+            "size_bytes": size,
+            "size_mb": round(size / 1024 / 1024, 2),
+            "download_url": f"/api/nvr/local/file?ch={ch}&date={date}&filename={fname}",
+            "stream_url": f"/api/nvr/local/stream?ch={ch}&date={date}&filename={fname}"
+        })
+
+    return {"ch": ch, "date": date, "path": dir_path, "total": len(files), "files": files}
+
+@app.get("/api/nvr/local/file")
+async def nvr_local_file(ch: int, date: str, filename: str):
+    """直接從本機磁碟下載 AVI 檔案"""
+    from fastapi.responses import FileResponse
+
+    # 防止路徑穿越攻擊
+    safe_filename = os.path.basename(filename)
+    if not safe_filename.lower().endswith(".avi"):
+        raise HTTPException(400, "只支援 AVI 檔案")
+
+    try:
+        year, month, day = date.split("-")
+        month = str(int(month))
+        day   = str(int(day))
+    except Exception:
+        raise HTTPException(400, "date 格式錯誤")
+
+    file_path = os.path.join(NVR_MEDIA_PATH, f"Ch{ch}", year, month, day, safe_filename)
+
+    if not os.path.isfile(file_path):
+        raise HTTPException(404, f"檔案不存在：{file_path}")
+
+    return FileResponse(file_path, media_type="video/avi",
+                        filename=safe_filename)
+
+@app.get("/api/nvr/local/stream")
+async def nvr_local_stream(ch: int, date: str, filename: str):
+    """用 ffmpeg 將本機 AVI 即時轉碼為 MP4 串流，供瀏覽器直接播放"""
+    from fastapi.responses import StreamingResponse
+
+    safe_filename = os.path.basename(filename)
+    if not safe_filename.lower().endswith(".avi"):
+        raise HTTPException(400, "只支援 AVI 檔案")
+
+    try:
+        year, month, day = date.split("-")
+        month = str(int(month))
+        day   = str(int(day))
+    except Exception:
+        raise HTTPException(400, "date 格式錯誤")
+
+    file_path = os.path.join(NVR_MEDIA_PATH, f"Ch{ch}", year, month, day, safe_filename)
+    if not os.path.isfile(file_path):
+        raise HTTPException(404, f"檔案不存在：{file_path}")
+
+    cmd = [
+        "ffmpeg", "-y", "-i", file_path,
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-c:a", "aac",
+        "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        "pipe:1"
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+    except FileNotFoundError:
+        raise HTTPException(503, "伺服器未安裝 ffmpeg，請先安裝後重啟")
+
+    async def gen():
+        try:
+            while True:
+                chunk = await proc.stdout.read(65536)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try: proc.kill()
+            except Exception: pass
+
+    return StreamingResponse(gen(), media_type="video/mp4",
+                             headers={"Cache-Control": "no-cache",
+                                      "X-Accel-Buffering": "no"})
 
 # ====== 即時設備位置 API ======
 @app.get("/api/devices/positions")
