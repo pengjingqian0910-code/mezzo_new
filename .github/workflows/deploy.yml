@@ -1,0 +1,74 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # 需要前一個 commit 以判斷哪些檔案有變動
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            export PUBLIC_URL="http://52.194.210.107:5555"
+            export JWT_SECRET="mezzo_eoc_jwt_secret_2026"
+
+            # 拉取最新程式碼
+            cd ~/mezzo_web_system
+            git pull origin main
+
+            # 判斷是否需要重新 build image
+            REBUILD=false
+            if git diff HEAD~1 HEAD --name-only 2>/dev/null | grep -qE "Dockerfile|requirements\.txt|entrypoint\.sh"; then
+              REBUILD=true
+            fi
+            if ! docker image inspect mezzo:latest > /dev/null 2>&1; then
+              REBUILD=true
+            fi
+
+            _docker_run() {
+              docker run -d \
+                --name mezzo \
+                --restart unless-stopped \
+                -p 5555:80 \
+                -e PUBLIC_URL="$PUBLIC_URL" \
+                -e JWT_SECRET="$JWT_SECRET" \
+                -v ~/mezzo_web_system/mezzo_web_system:/app \
+                mezzo:latest
+            }
+
+            if [ "$REBUILD" = "true" ]; then
+              echo ">>> 偵測到 Dockerfile/requirements 變動，重新 build image..."
+              cd ~/mezzo_web_system/mezzo_web_system
+              docker build -t mezzo:latest .
+              docker stop mezzo 2>/dev/null || true
+              docker rm   mezzo 2>/dev/null || true
+              _docker_run
+            else
+              echo ">>> 程式碼異動，重啟容器即可..."
+              CONTAINER_EXISTS=$(docker ps -a --filter "name=^mezzo$" --format "yes" 2>/dev/null || echo "no")
+              if [ "$CONTAINER_EXISTS" = "yes" ]; then
+                docker restart mezzo
+              else
+                cd ~/mezzo_web_system/mezzo_web_system
+                docker build -t mezzo:latest .
+                _docker_run
+              fi
+            fi
+
+            echo "✅ 部署完成"
+            docker ps --filter "name=mezzo" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"

@@ -27,3 +27,7 @@ __MACOSX/
 .vscode/
 .claude/
 *.code-workspace
+
+# 部署壓縮檔與 JVM crash log
+*.tar.gz
+hs_err_pid*.log

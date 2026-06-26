@@ -1,17 +1,21 @@
 // js/store.js
 import { reactive } from 'vue';
 
+// 若部署在子路徑 /mezzo/ 下，由 index_3D.html 設定 window.MEZZO_BASE
+export const BASE = (typeof window !== 'undefined' && window.MEZZO_BASE) ? window.MEZZO_BASE : '';
+
 export const store = reactive({
     currentUser: null,
     devices: [],
     telemetry: {},
     geofences: [],
-    alerts: [], 
+    alerts: [],
+    sosAlerts: [],   // SOS 緊急告警佇列，由 WebSocket sos_alert 事件推入
 
     async fetchDevices() {
         if (!this.currentUser) return;
         try {
-            const res = await fetch(`/api/devices?username=${this.currentUser.username}`);
+            const res = await fetch(`${BASE}/api/devices?username=${this.currentUser.username}`);
             this.devices = await res.json();
         } catch (e) {
             console.error("無法取得設備列表", e);
@@ -20,21 +24,31 @@ export const store = reactive({
 
     async fetchGeofences() {
         try {
-            const res = await fetch('/api/geofences');
+            const res = await fetch(`${BASE}/api/geofences`);
             this.geofences = await res.json();
         } catch (e) {
             console.error("無法取得警戒區列表", e);
         }
     },
 
+    // 帶 Authorization header 的 fetch 包裝，供各 Tab 使用
+    authFetch(url, options = {}) {
+        const token = localStorage.getItem('mezzo_token');
+        const headers = { ...(options.headers || {}) };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        return fetch(url, { ...options, headers });
+    },
+
     connectWebSocket() {
         const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${wsProto}//${location.host}/ws/map-data`);
+        const ws = new WebSocket(`${wsProto}//${location.host}${BASE}/ws/map-data`);
         ws.onmessage = (event) => {
             const msg = JSON.parse(event.data);
             if (msg.type === 'telemetry_update') {
                 this.telemetry = msg.data;
                 this.checkGeofence();
+            } else if (msg.type === 'sos_alert') {
+                this.sosAlerts.push(msg.data);
             }
         };
     },

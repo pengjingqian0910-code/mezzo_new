@@ -1,6 +1,6 @@
 // js/GridTab.js
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue';
-import { store } from './store.js';
+import { store, BASE } from './store.js';
 
 export default {
     template: `
@@ -245,7 +245,7 @@ export default {
             nvrCameras.value = [];
             
             try {
-                const res = await fetch('/api/nvr/cameras');
+                const res = await fetch(`${BASE}/api/nvr/cameras`);
                 if (!res.ok) throw new Error("Proxy fetch failed");
                 const data = await res.json();
                 
@@ -297,7 +297,7 @@ export default {
         const fetchMonthRecordStatus = async () => {
             try {
                 const searchTime = `${currentYear.value}-${padZero(currentMonth.value)}-01 00:00:00`;
-                const url = `/api/nvr/record_status?channel=${pbCamera.value.channelID}&time_str=${encodeURIComponent(searchTime)}`;
+                const url = `${BASE}/api/nvr/record_status?channel=${pbCamera.value.channelID}&time_str=${encodeURIComponent(searchTime)}`;
                 const res = await fetch(url);
                 const data = await res.json();
                 
