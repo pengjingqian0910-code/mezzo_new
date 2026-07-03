@@ -132,6 +132,17 @@ class Geofence(Base):
     points     = Column(String)
     is_enabled = Column(Boolean, default=True)
 
+class GeofenceEvent(Base):
+    __tablename__ = 'geofence_events'
+    id            = Column(Integer, primary_key=True, index=True)
+    device_id     = Column(String, index=True)
+    geofence_id   = Column(Integer)
+    geofence_name = Column(String)
+    event_type    = Column(String)   # "enter" / "exit"
+    lat           = Column(String)
+    lng           = Column(String)
+    timestamp     = Column(String, index=True)
+
 class NVRConfig(Base):
     __tablename__ = 'nvr_config'
     id        = Column(Integer, primary_key=True)
@@ -544,6 +555,10 @@ def on_mqtt_message(client, userdata, msg):
                         forward_gps_to_tak(dev_id, lat, lng, battery),
                         fastapi_loop
                     )
+                    asyncio.run_coroutine_threadsafe(
+                        check_geofence_and_notify(dev_id, lat, lng),
+                        fastapi_loop
+                    )
         except Exception as e:
             print(f"[MQTT GPS] exception: {e}")
 
@@ -657,6 +672,74 @@ async def _save_sos_record(device_id: str, channel: str, lat, lng, timestamp: st
         db.commit()
     except Exception as e:
         print(f"[SOS DB] 寫入錯誤: {e}")
+    finally:
+        db.close()
+
+# ====== Geofence 伺服器端偵測 + 通知 ======
+_geofence_inside_state: dict = {}   # (device_id, geofence_id) -> bool，記錄上次偵測時裝置是否在區域內
+
+def _point_in_polygon(lng: float, lat: float, points: list) -> bool:
+    """Ray-casting 演算法，跟 js/store.js 的 isPointInPolygon 邏輯一致"""
+    inside = False
+    n = len(points)
+    j = n - 1
+    for i in range(n):
+        xi, yi = points[i]["lng"], points[i]["lat"]
+        xj, yj = points[j]["lng"], points[j]["lat"]
+        if ((yi > lat) != (yj > lat)) and (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+def _notify_geofence_enter(device_id: str, fence_name: str, lat, lng, ts: str):
+    cfg = get_social_config()
+    if not cfg or not cfg.is_enabled:
+        return
+    db = SessionLocal()
+    try:
+        users_wa = db.query(User).filter(User.whatsapp != None, User.whatsapp != "").all()
+        if not users_wa:
+            return
+        dev = db.query(Device).filter(Device.device_id == device_id).first()
+        dev_name = dev.name if dev else device_id
+        stream_url = generate_viewer_url(device_id, cfg)
+        msg = (f"⚠️ *WiB EOC 警戒區告警*\n設備: {dev_name} ({device_id})\n"
+               f"已進入警戒區:「{fence_name}」\n時間: {ts}\n座標: {lat}, {lng}\n"
+               f"──────────────\n📹 即時影像：\n{stream_url}\n"
+               f"──────────────\nWiB EOC 緊急調度指揮系統")
+        for u in users_wa:
+            send_whatsapp_message(u.whatsapp, msg, cfg)
+    finally:
+        db.close()
+
+async def check_geofence_and_notify(device_id: str, lat: float, lng: float):
+    db = SessionLocal()
+    try:
+        fences = db.query(Geofence).filter(Geofence.is_enabled == True).all()
+        for fence in fences:
+            try:
+                points = json.loads(fence.points)
+            except Exception:
+                continue
+            key = (device_id, fence.id)
+            was_inside = _geofence_inside_state.get(key, False)
+            now_inside = _point_in_polygon(lng, lat, points)
+            if now_inside == was_inside:
+                continue
+            _geofence_inside_state[key] = now_inside
+            event_type = "enter" if now_inside else "exit"
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            db.add(GeofenceEvent(device_id=device_id, geofence_id=fence.id,
+                                 geofence_name=fence.name, event_type=event_type,
+                                 lat=str(lat), lng=str(lng), timestamp=ts))
+            db.commit()
+            await manager.broadcast({"type": "geofence_alert", "data": {
+                "device_id": device_id, "geofence_id": fence.id,
+                "geofence_name": fence.name, "event_type": event_type,
+                "lat": lat, "lng": lng, "timestamp": ts
+            }})
+            if event_type == "enter":
+                _notify_geofence_enter(device_id, fence.name, lat, lng, ts)
     finally:
         db.close()
 
@@ -1671,12 +1754,26 @@ def get_geofences(db: Session = Depends(get_db)):
     return [{"id": g.id, "name": g.name, "points": g.points, "is_enabled": g.is_enabled}
             for g in db.query(Geofence).all()]
 
+@app.get("/api/geofences/events")
+def get_geofence_events(device_id: Optional[str] = None, limit: int = 200,
+                        db: Session = Depends(get_db),
+                        _user: dict = Depends(get_current_user)):
+    q = db.query(GeofenceEvent)
+    if device_id:
+        q = q.filter(GeofenceEvent.device_id == device_id)
+    rows = q.order_by(GeofenceEvent.id.desc()).limit(limit).all()
+    return [{"id": r.id, "device_id": r.device_id, "geofence_id": r.geofence_id,
+             "geofence_name": r.geofence_name, "event_type": r.event_type,
+             "lat": r.lat, "lng": r.lng, "timestamp": r.timestamp} for r in rows]
+
 @app.post("/api/geofences")
-def add_geofence(geo: dict, db: Session = Depends(get_db)):
+def add_geofence(geo: dict, db: Session = Depends(get_db),
+                 _user: dict = Depends(get_current_user)):
     db.add(Geofence(name=geo.get("name"), points=geo.get("points"))); db.commit(); return {}
 
 @app.put("/api/geofences/{geo_id}")
-def update_geofence(geo_id: int, geo: dict, db: Session = Depends(get_db)):
+def update_geofence(geo_id: int, geo: dict, db: Session = Depends(get_db),
+                    _user: dict = Depends(get_current_user)):
     g = db.query(Geofence).filter(Geofence.id == geo_id).first()
     if not g: raise HTTPException(status_code=404, detail="找不到警戒區")
     if "is_enabled" in geo: g.is_enabled = geo["is_enabled"]
@@ -1685,7 +1782,8 @@ def update_geofence(geo_id: int, geo: dict, db: Session = Depends(get_db)):
     db.commit(); return {}
 
 @app.delete("/api/geofences/{geo_id}")
-def del_geofence(geo_id: int, db: Session = Depends(get_db)):
+def del_geofence(geo_id: int, db: Session = Depends(get_db),
+                 _user: dict = Depends(get_current_user)):
     db.query(Geofence).filter(Geofence.id == geo_id).delete(); db.commit(); return {}
 
 # ====== 音檔服務 API ======
@@ -2849,4 +2947,4 @@ def nvrv_record_status(ch: int, time_str: str, token: str = "",
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=80, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "80")), reload=True)
