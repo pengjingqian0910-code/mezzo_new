@@ -23,17 +23,15 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 # ====== 環境設定 ======
-MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "118.163.141.80")
-MQTT_BROKER_PORT = int(os.getenv("MQTT_BROKER_PORT", "1688"))
-MQTT_TOPIC       = os.getenv("MQTT_TOPIC", "/WJI/PTT/#")
-NVR_HOST         = os.getenv("NVR_HOST", "118.163.141.80")
-NVR_AUTH         = os.getenv("NVR_AUTH", "QWRtaW46MTIzNA==")  # base64(Admin:1234)
-AUDIO_BASE_PATH  = os.getenv("AUDIO_BASE_PATH", "static/audio")
-NVR_MEDIA_PATH   = os.getenv("NVR_MEDIA_PATH", r"C:\Media")
-TAK_SERVER_HOST  = os.getenv("TAK_SERVER_HOST", "")
-TAK_SERVER_PORT  = int(os.getenv("TAK_SERVER_PORT", "8087"))
-
-os.makedirs(AUDIO_BASE_PATH, exist_ok=True)
+# 環境變數，以及 PyJWT、aiohttp 的選裝檢查搬到 config.py 了
+# （STT、WebRTC 的選裝檢查還留在下面，之後跟各自的模組一起拆，原因見 config.py 開頭說明）
+from config import (
+    MQTT_BROKER_HOST, MQTT_BROKER_PORT, MQTT_TOPIC,
+    NVR_HOST, NVR_AUTH, AUDIO_BASE_PATH, NVR_MEDIA_PATH,
+    TAK_SERVER_HOST, TAK_SERVER_PORT,
+    _pyjwt, JWT_AVAILABLE, JWT_SECRET, JWT_EXPIRE_HOURS,
+    aiohttp, AIOHTTP_AVAILABLE,
+)
 
 # ====== STT (語音轉文字) 相依套件（選裝）======
 try:
@@ -61,27 +59,6 @@ async def _load_whisper_model():
         print("[STT] faster-whisper model loaded, STT enabled")
     except Exception as _e:
         print(f"[STT] model load failed ({_e}), STT disabled")
-
-# ====== PyJWT（v1 API 認證用）======
-try:
-    import jwt as _pyjwt
-    JWT_AVAILABLE = True
-except ImportError:
-    _pyjwt = None  # type: ignore
-    JWT_AVAILABLE = False
-    print("[JWT] PyJWT not installed, v1 API JWT disabled. Run: pip install PyJWT")
-
-JWT_SECRET = os.getenv("JWT_SECRET", "mezzo_eoc_jwt_secret_change_me_in_production")
-JWT_EXPIRE_HOURS = int(os.getenv("JWT_EXPIRE_HOURS", "24"))
-
-# ====== aiohttp（MJPEG 代理使用，選裝）======
-try:
-    import aiohttp
-    AIOHTTP_AVAILABLE = True
-except ImportError:
-    aiohttp = None  # type: ignore
-    AIOHTTP_AVAILABLE = False
-    print("[aiohttp] not installed, MJPEG proxy disabled. Run: pip install aiohttp")
 
 # ====== WebRTC 相依套件（選裝）======
 try:
