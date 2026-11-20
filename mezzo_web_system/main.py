@@ -16,8 +16,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
 from typing import Optional
-from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Table, Boolean, Text, text
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
+# [拆分 database.py] 下面這些 sqlalchemy 名稱只有 Model 定義在用，已隨 Model 搬到 database.py，main.py 不再使用
+# from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Table, Boolean, Text, text
+# from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 # ====== 環境設定 ======
 MQTT_BROKER_HOST = os.getenv("MQTT_BROKER_HOST", "118.163.141.80")
@@ -95,125 +98,26 @@ except ImportError:
     print("[WebRTC] aiortc not installed, WebRTC disabled. Run: pip install aiortc aiohttp")
 
 # ====== 資料庫 ======
-SQLALCHEMY_DATABASE_URL = "sqlite:///./mezzo.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-user_device_link = Table(
-    'user_device_link', Base.metadata,
-    Column('user_id', Integer, ForeignKey('users.id'), primary_key=True),
-    Column('device_id', Integer, ForeignKey('devices.id'), primary_key=True)
+# engine / SessionLocal / Base / 所有資料表 Model / get_db 搬到 database.py 了
+from database import (
+    engine, SessionLocal, Base,
+    User, Device, NVRConfig, MqttConfig, SocialMediaConfig, TakServerConfig,
+    GpsRecord, WhatsAppLog, SosRecord, PttRecord,
+    get_db,
 )
-
-class User(Base):
-    __tablename__ = 'users'
-    id            = Column(Integer, primary_key=True, index=True)
-    username      = Column(String, unique=True, index=True)
-    password      = Column(String)
-    email         = Column(String, nullable=True)
-    role          = Column(String, default="operator")
-    whatsapp      = Column(String, nullable=True)
-    manager_id    = Column(Integer, ForeignKey('users.id'), nullable=True)
-    managed_users = relationship("User", backref="manager", remote_side=[id])
-    devices       = relationship("Device", secondary=user_device_link, backref="users")
-
-class Device(Base):
-    __tablename__ = 'devices'
-    id        = Column(Integer, primary_key=True, index=True)
-    device_id = Column(String, unique=True, index=True)
-    name      = Column(String)
-    mjpeg_url = Column(String)
 
 # Geofence / GeofenceEvent 模型定義搬到 geofence.py 了，這裡先呼叫 init_models()，
 # 確保 Base.metadata.create_all() 執行前這兩張表已經註冊（router 部分要等
 # get_current_user / manager 等依賴都定義好之後才能組出來，見下面 geofence.init_router()）。
-import geofence
-Geofence, GeofenceEvent = geofence.init_models(Base)
+import geofence   # 下面 geofence.init_router() 還會用到，保留
+# [修正] init_models() 改到 database.py 裡呼叫。python main.py（reload 模式）會讓 main.py 被執行兩次
+# （__main__ / __mp_main__ 與 uvicorn 匯入的 main），但 database 模組只載入一次、Base 是同一份，
+# 留在這裡會對同一個 Base 重複註冊 → "Table 'geofences' is already defined"。
+# Geofence, GeofenceEvent = geofence.init_models(Base)
+from database import Geofence, GeofenceEvent
 
-class NVRConfig(Base):
-    __tablename__ = 'nvr_config'
-    id        = Column(Integer, primary_key=True)
-    ip        = Column(String,  default='127.0.0.1')
-    http_port = Column(Integer, default=80)
-    rtsp_port = Column(Integer, default=2554)
-    username  = Column(String,  default='Admin')
-    password  = Column(String,  default='1234')
-
-class MqttConfig(Base):
-    __tablename__ = 'mqtt_config'
-    id   = Column(Integer, primary_key=True)
-    ip   = Column(String,  default='118.163.141.80')
-    port = Column(Integer, default=1688)
-
-class SocialMediaConfig(Base):
-    __tablename__ = 'social_media_config'
-    id             = Column(Integer, primary_key=True)
-    provider       = Column(String,  default="meta")
-    access_token   = Column(String,  default="")
-    phone_number_id = Column(String, default="")
-    account_sid    = Column(String,  default="")
-    public_url     = Column(String,  default="")
-    stt_keyword    = Column(String,  default="影像傳送")
-    is_enabled     = Column(Boolean, default=False)
-
-class TakServerConfig(Base):
-    __tablename__ = 'tak_server_config'
-    id         = Column(Integer, primary_key=True)
-    host       = Column(String,  default='')
-    port       = Column(Integer, default=8087)
-    enabled    = Column(Boolean, default=False)
-    callsign   = Column(String,  default='Mezzo-EOC')
-
-class GpsRecord(Base):
-    __tablename__ = 'gps_records'
-    id        = Column(Integer, primary_key=True, index=True)
-    device_id = Column(String, index=True)
-    lat       = Column(String)
-    lng       = Column(String)
-    battery   = Column(Integer, default=0)
-    status    = Column(String, default="")
-    source    = Column(String, default="mqtt")
-    timestamp = Column(String, index=True)
-
-class WhatsAppLog(Base):
-    __tablename__ = 'whatsapp_logs'
-    id               = Column(Integer, primary_key=True, index=True)
-    timestamp        = Column(String)
-    device_id        = Column(String)
-    source           = Column(String, default="mqtt")
-    transcript       = Column(Text, default="")
-    keyword_detected = Column(Boolean, default=False)
-    stream_url       = Column(String, default="")
-    recipients       = Column(String, default="")
-    status           = Column(String, default="pending")
-
-class SosRecord(Base):
-    __tablename__ = 'sos_records'
-    id        = Column(Integer, primary_key=True, index=True)
-    device_id = Column(String, index=True)
-    channel   = Column(String, default='')
-    lat       = Column(String, default='0')
-    lng       = Column(String, default='0')
-    timestamp = Column(String, index=True)
-
-class PttRecord(Base):
-    __tablename__ = 'ptt_records'
-    id        = Column(Integer, primary_key=True, index=True)
-    group_id  = Column(Integer)
-    sender    = Column(String)
-    text      = Column(String)
-    text_zh   = Column(String, default="")
-    text_en   = Column(String, default="")
-    audio_url = Column(String)
-    timestamp = Column(String)
-
+# 所有 Model（含 geofence 的兩張表）都註冊完才建表
 Base.metadata.create_all(bind=engine)
-
-def get_db():
-    db = SessionLocal()
-    try: yield db
-    finally: db.close()
 
 # ====== TAK TCP Server（供 ATAK 客戶端連線）======
 TAK_TCP_PORT = int(os.getenv("TAK_TCP_PORT", "8087"))
