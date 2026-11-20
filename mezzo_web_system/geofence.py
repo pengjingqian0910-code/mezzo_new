@@ -8,9 +8,10 @@
 會觸發 Python 把 main.py 當成另一個叫 "main" 的模組重新載入一次，產生兩份
 main 模組實例，導致像 ConnectionManager 這種需要單例的東西整個對不起來）。
 
-改用「依賴注入」：main.py 呼叫 init_models() / init_router()，把它已經定義好
-的東西（Base、SessionLocal、get_current_user...）當參數傳進來，這裡完全不
-反向 import main，兩邊各自獨立、沒有循環匯入的問題。
+改用「依賴注入」：database.py 呼叫 init_models(Base) 註冊資料表，main.py 呼叫
+init_router()，把它已經定義好的東西（SessionLocal、get_current_user...）當參數
+傳進來，這裡完全不反向 import main / database，沒有循環匯入的問題。
+（init_models 放在 database.py 而不是 main.py 的原因，見 database.py 裡的說明）
 """
 import json
 from datetime import datetime
@@ -163,6 +164,14 @@ def init_router(Geofence, GeofenceEvent, SessionLocal, get_current_user, manager
     @router.delete("/api/geofences/{geo_id}")
     def del_geofence(geo_id: int, db: Session = Depends(_db_dep),
                      _user: dict = Depends(_user_dep)):
-        db.query(Geofence).filter(Geofence.id == geo_id).delete(); db.commit(); return {}
+        # 原本：db.query(Geofence).filter(Geofence.id == geo_id).delete(); db.commit(); return {}
+        db.query(Geofence).filter(Geofence.id == geo_id).delete(); db.commit()
+        # [修正] 一併清掉這個警戒區的進出狀態。SQLite 刪掉 id 最大的那筆後，新建的警戒區會重用同一個 id；
+        # 不清掉的話，裝置若原本在舊區域內，進入新區域時會被當成「早就在裡面」，漏掉告警與 WhatsApp 通知。
+        # 這個函式跑在 threadpool，偵測函式可能同時在寫這個 dict，所以先 list() 複製 key、用 pop(key, None) 刪。
+        for key in list(_geofence_inside_state):
+            if key[1] == geo_id:
+                _geofence_inside_state.pop(key, None)
+        return {}
 
     return router, check_geofence_and_notify

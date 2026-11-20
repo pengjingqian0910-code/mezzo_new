@@ -83,9 +83,8 @@ from database import (
     get_db,
 )
 
-# Geofence / GeofenceEvent 模型定義搬到 geofence.py 了，這裡先呼叫 init_models()，
-# 確保 Base.metadata.create_all() 執行前這兩張表已經註冊（router 部分要等
-# get_current_user / manager 等依賴都定義好之後才能組出來，見下面 geofence.init_router()）。
+# Geofence / GeofenceEvent 模型定義在 geofence.py，由 database.py 呼叫 init_models() 註冊（原因見下方 [修正]）；
+# router 部分要等 get_current_user / manager 等依賴都定義好之後才能組出來，見下面 geofence.init_router()。
 import geofence   # 下面 geofence.init_router() 還會用到，保留
 # [修正] init_models() 改到 database.py 裡呼叫。python main.py（reload 模式）會讓 main.py 被執行兩次
 # （__main__ / __mp_main__ 與 uvicorn 匯入的 main），但 database 模組只載入一次、Base 是同一份，
