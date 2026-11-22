@@ -1,5 +1,6 @@
 // js/GeofenceTab.js
-import { ref, onMounted, onUnmounted } from 'vue';
+// 原本：import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { store, BASE } from './store.js';
 
 export default {
@@ -48,6 +49,8 @@ export default {
         const isDrawing = ref(false);
         const tempPoints = ref([]);
         let tempEntity = null; // 繪製中的多邊形實體
+        let vertexEntities = []; // [新增] 繪製中的紅色頂點實體（記下來才清得掉）
+        let fenceEntities = [];  // [新增] 已儲存警戒區的實體（多邊形＋名稱）
 
         const initDrawMap = () => {
             drawViewer = new Cesium.Viewer('drawContainer', {
@@ -89,8 +92,10 @@ export default {
                 }
                 
                 // 清除暫存
-                tempPoints.value = [];
-                if (tempEntity) drawViewer.entities.remove(tempEntity);
+                // 原本：tempPoints.value = [];
+                // 原本：if (tempEntity) drawViewer.entities.remove(tempEntity);
+                // [修正] 原本只移除暫時的多邊形，紅色頂點會一直留在地圖上；改成連頂點一起清掉
+                clearTemp();
             }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
         };
 
@@ -106,8 +111,69 @@ export default {
                 }
             });
             // 畫出頂點
-            tempPoints.value.forEach(p => {
-                drawViewer.entities.add({ position: Cesium.Cartesian3.fromDegrees(p.lng, p.lat), point: { pixelSize: 10, color: Cesium.Color.RED } });
+            // 原本：tempPoints.value.forEach(p => {
+            // 原本：    drawViewer.entities.add({ position: Cesium.Cartesian3.fromDegrees(p.lng, p.lat), point: { pixelSize: 10, color: Cesium.Color.RED } });
+            // 原本：});
+            // [修正] 原本每點一下就把「全部」頂點再加一次（會重疊），而且沒記下來、之後清不掉；
+            //        改成先移除上一次畫的頂點再重畫，並記錄起來
+            vertexEntities.forEach(e => drawViewer.entities.remove(e));
+            vertexEntities = tempPoints.value.map(p =>
+                drawViewer.entities.add({ position: Cesium.Cartesian3.fromDegrees(p.lng, p.lat), point: { pixelSize: 10, color: Cesium.Color.RED } })
+            );
+        };
+
+        // [新增] 清掉繪製中的暫時多邊形與紅色頂點
+        const clearTemp = () => {
+            tempPoints.value = [];
+            if (tempEntity) { drawViewer.entities.remove(tempEntity); tempEntity = null; }
+            vertexEntities.forEach(e => drawViewer.entities.remove(e));
+            vertexEntities = [];
+        };
+
+        // [新增] 在繪製地圖上畫出已儲存的警戒區與名稱：啟用中＝紅色、已停用＝灰色
+        //        （電子地圖 MapTab 只畫啟用中的；這裡是設定頁，全部畫出來比較好管理）
+        const drawSavedFences = () => {
+            if (!drawViewer) return;
+            fenceEntities.forEach(e => drawViewer.entities.remove(e));
+            fenceEntities = [];
+            store.geofences.forEach(fence => {
+                try {
+                    const pts = JSON.parse(fence.points);
+                    if (!pts || pts.length < 3) return;
+                    const color = fence.is_enabled ? Cesium.Color.RED : Cesium.Color.GRAY;
+                    const centerLng = pts.reduce((sum, p) => sum + p.lng, 0) / pts.length;
+                    const centerLat = pts.reduce((sum, p) => sum + p.lat, 0) / pts.length;
+                    fenceEntities.push(drawViewer.entities.add({
+                        name: fence.name,
+                        position: Cesium.Cartesian3.fromDegrees(centerLng, centerLat),
+                        polygon: {
+                            hierarchy: Cesium.Cartesian3.fromDegreesArray(pts.flatMap(p => [p.lng, p.lat])),
+                            height: 0,   // 有高度才畫得出外框線
+                            material: color.withAlpha(fence.is_enabled ? 0.25 : 0.15),
+                            outline: true, outlineColor: color
+                        },
+                        label: {
+                            text: fence.name,
+                            font: '14px sans-serif',
+                            fillColor: fence.is_enabled ? Cesium.Color.WHITE : Cesium.Color.LIGHTGRAY,
+                            outlineColor: Cesium.Color.BLACK,
+                            outlineWidth: 2,
+                            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                            pixelOffset: new Cesium.Cartesian2(0, -8),
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY
+                        }
+                    }));
+                    // [新增] 頂點也一起畫出來（顏色跟區塊一致：啟用中＝紅、已停用＝灰），刪除 / 重畫時跟區塊一起移除
+                    pts.forEach(p => {
+                        fenceEntities.push(drawViewer.entities.add({
+                            position: Cesium.Cartesian3.fromDegrees(p.lng, p.lat),
+                            point: { pixelSize: 10, color: color }
+                        }));
+                    });
+                } catch (e) {
+                    console.error("解析警戒區座標失敗", e);
+                }
             });
         };
 
@@ -136,7 +202,10 @@ export default {
             }
         };
 
-        onMounted(() => { initDrawMap(); store.fetchGeofences(); });
+        // 原本：onMounted(() => { initDrawMap(); store.fetchGeofences(); });
+        // [新增] 地圖建好後先畫一次已儲存的警戒區；之後新增 / 刪除 / 改名 / 啟用停用（store.geofences 變動）時自動重畫
+        onMounted(() => { initDrawMap(); drawSavedFences(); store.fetchGeofences(); });
+        watch(() => store.geofences, drawSavedFences, { deep: true });
         onUnmounted(() => { if (drawViewer) drawViewer.destroy(); });
 
         return { store, isDrawing, startDrawing, toggleGeo, deleteGeo, renameGeo };
