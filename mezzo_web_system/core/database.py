@@ -3,7 +3,7 @@
 ----------
 SQLAlchemy engine / SessionLocal / Base、所有資料表 Model，以及 FastAPI 用的 get_db 依賴。
 
-這支檔案不 import main，其他模組可以直接 `from database import ...` 使用。
+這支檔案不 import main，其他模組可以直接 `from core.database import ...` 使用。
 Geofence / GeofenceEvent 兩張表在本檔下方呼叫 geofence.init_models(Base) 註冊；
 Base.metadata.create_all() 留在 main.py。
 """
@@ -122,7 +122,8 @@ class PttRecord(Base):
 # 一定要放在 database.py 而不是 main.py：python main.py（reload 模式）會讓 main.py 被執行兩次，
 # 但 database 模組只會載入一次，放這裡才能保證同一個 Base 只註冊一次。
 # （geofence.py 不 import database / main，所以沒有循環匯入）
-import geofence
+# [搬移] geofence.py 搬到 features/geofence.py。原本：import geofence
+from features import geofence
 Geofence, GeofenceEvent = geofence.init_models(Base)
 
 

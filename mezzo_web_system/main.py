@@ -25,7 +25,8 @@ from sqlalchemy.orm import Session
 # ====== 環境設定 ======
 # 環境變數，以及 PyJWT、aiohttp 的選裝檢查搬到 config.py 了
 # （STT、WebRTC 的選裝檢查還留在下面，之後跟各自的模組一起拆，原因見 config.py 開頭說明）
-from config import (
+# [搬移] config.py 搬到 core/config.py。原本：from config import (
+from core.config import (
     MQTT_BROKER_HOST, MQTT_BROKER_PORT, MQTT_TOPIC,
     NVR_HOST, NVR_AUTH, AUDIO_BASE_PATH, NVR_MEDIA_PATH,
     TAK_SERVER_HOST, TAK_SERVER_PORT,
@@ -76,7 +77,8 @@ except ImportError:
 
 # ====== 資料庫 ======
 # engine / SessionLocal / Base / 所有資料表 Model / get_db 搬到 database.py 了
-from database import (
+# [搬移] database.py 搬到 core/database.py。原本：from database import (
+from core.database import (
     engine, SessionLocal, Base,
     User, Device, NVRConfig, MqttConfig, SocialMediaConfig, TakServerConfig,
     GpsRecord, WhatsAppLog, SosRecord, PttRecord,
@@ -85,12 +87,14 @@ from database import (
 
 # Geofence / GeofenceEvent 模型定義在 geofence.py，由 database.py 呼叫 init_models() 註冊（原因見下方 [修正]）；
 # router 部分要等 get_current_user / manager 等依賴都定義好之後才能組出來，見下面 geofence.init_router()。
-import geofence   # 下面 geofence.init_router() 還會用到，保留
+# [搬移] geofence.py 搬到 features/geofence.py。原本：import geofence   # 下面 geofence.init_router() 還會用到，保留
+from features import geofence   # 下面 geofence.init_router() 還會用到，保留
 # [修正] init_models() 改到 database.py 裡呼叫。python main.py（reload 模式）會讓 main.py 被執行兩次
 # （__main__ / __mp_main__ 與 uvicorn 匯入的 main），但 database 模組只載入一次、Base 是同一份，
 # 留在這裡會對同一個 Base 重複註冊 → "Table 'geofences' is already defined"。
 # Geofence, GeofenceEvent = geofence.init_models(Base)
-from database import Geofence, GeofenceEvent
+# [搬移] 原本：from database import Geofence, GeofenceEvent
+from core.database import Geofence, GeofenceEvent
 
 # 所有 Model（含 geofence 的兩張表）都註冊完才建表
 Base.metadata.create_all(bind=engine)
