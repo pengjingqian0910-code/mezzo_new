@@ -267,11 +267,15 @@ export default {
         };
 
         const saveConfig = async () => {
-            await fetch(`${BASE}/api/social/config`, {
+            // [修正] 後端 PUT /api/social/config 需要管理員（require_admin），原本沒帶 token 一律 401 卻仍顯示成功，改用 authFetch、依結果提示
+            // 原本：await fetch(`${BASE}/api/social/config`, {
+            const res = await store.authFetch(`${BASE}/api/social/config`, {
                 method: 'PUT', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(config.value)
             });
-            alert('✅ Settings saved');
+            // 原本：alert('✅ Settings saved');
+            if (res.ok) { alert('✅ Settings saved'); }
+            else { alert(`❌ Save failed (${res.status}): ${await res.text()}`); }
         };
 
         const sendTest = async () => {

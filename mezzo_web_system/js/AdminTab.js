@@ -119,28 +119,43 @@ export default {
         };
 
         const bindDevice = async () => {
-            const res = await fetch(`${BASE}/api/users/${store.currentUser.username}/bind`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({device_id: bindDevId.value}) });
+            // [修正] 後端 bind 需要登入（get_current_user），原本沒帶 token 一律 401，改用 authFetch
+            // 原本：const res = await fetch(`${BASE}/api/users/${store.currentUser.username}/bind`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({device_id: bindDevId.value}) });
+            const res = await store.authFetch(`${BASE}/api/users/${store.currentUser.username}/bind`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({device_id: bindDevId.value}) });
             if(res.ok) { bindDevId.value = ''; store.fetchDevices(); }
             else { alert("綁定失敗，請確認 Device ID 是否註冊於系統中"); }
         };
 
         const unbindDevice = async (id) => {
-            if(confirm('解除綁定後將無法監看此設備?')) { await fetch(`${BASE}/api/users/${store.currentUser.username}/unbind/${id}`, { method: 'DELETE' }); store.fetchDevices(); }
+            // [修正] 後端 unbind 需要登入（get_current_user），原本沒帶 token 一律 401 且沒有提示，改用 authFetch、失敗時提示
+            // 原本：if(confirm('解除綁定後將無法監看此設備?')) { await fetch(`${BASE}/api/users/${store.currentUser.username}/unbind/${id}`, { method: 'DELETE' }); store.fetchDevices(); }
+            if(confirm('解除綁定後將無法監看此設備?')) {
+                const res = await store.authFetch(`${BASE}/api/users/${store.currentUser.username}/unbind/${id}`, { method: 'DELETE' });
+                if(!res.ok) { alert(`解除綁定失敗 (${res.status})：${await res.text()}`); }
+                store.fetchDevices();
+            }
         };
 
         const updateUserGroup = async (user) => {
-            await fetch(`${BASE}/api/users/${user.username}/assign_manager`, { 
-                method: 'PUT', headers: {'Content-Type': 'application/json'}, 
-                body: JSON.stringify({ role: user.role, manager_username: user.manager }) 
+            // [修正] 後端 assign_manager 需要管理員（require_admin），原本沒帶 token 一律 401 且沒有提示，改用 authFetch、失敗時提示
+            // 原本：await fetch(`${BASE}/api/users/${user.username}/assign_manager`, {
+            const res = await store.authFetch(`${BASE}/api/users/${user.username}/assign_manager`, {
+                method: 'PUT', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ role: user.role, manager_username: user.manager })
             });
-            fetchData(); 
+            if(!res.ok) { alert(`更新角色 / 管理者失敗 (${res.status})：${await res.text()}`); }
+            fetchData();
         };
 
         const resetPwd = async (username) => {
             const newPwd = prompt(`請輸入 ${username} 的新密碼:`);
             if(newPwd) {
-                await fetch(`${BASE}/api/users/${username}/reset_password`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({new_password: newPwd}) });
-                alert("密碼已重設");
+                // [修正] 後端 reset_password 需要管理員（require_admin），原本沒帶 token 一律 401 卻仍顯示「密碼已重設」，改用 authFetch、依結果提示
+                // 原本：await fetch(`${BASE}/api/users/${username}/reset_password`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({new_password: newPwd}) });
+                // 原本：alert("密碼已重設");
+                const res = await store.authFetch(`${BASE}/api/users/${username}/reset_password`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({new_password: newPwd}) });
+                if(res.ok) { alert("密碼已重設"); }
+                else { alert(`重設密碼失敗 (${res.status})：${await res.text()}`); }
             }
         };
 
