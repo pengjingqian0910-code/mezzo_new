@@ -329,6 +329,21 @@ def main():
                 else:
                     compare(tag, "檢查 9 瀏覽器（各步驟的錯誤）", outs[b], outs[c])
 
+                print("== 檢查 9b：警戒區繪製流程（截圖像素判斷頂點）==")
+                outs = {}
+                for d in (b, c):
+                    clean(d)
+                    shots = os.path.join(work, f"geofence_draw_{os.path.basename(d)}_{os.path.basename(os.path.dirname(os.path.dirname(py)))}")
+                    outs[d] = subprocess.run([browser_py, os.path.join(HERE, "browser_geofence_draw.py"), d, py, shots],
+                                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                             timeout=600, env=dict(os.environ, PYTHONIOENCODING="utf-8")).stdout
+                    clean(d)
+                print("      " + "\n      ".join(outs[c].splitlines()))
+                if "done" not in outs[c]:
+                    record(tag, "檢查 9b 警戒區繪製", "FAIL", "目前版本沒有跑完")
+                else:
+                    compare(tag, "檢查 9b 警戒區繪製", outs[b], outs[c], changed_status="CHANGED")
+
             print("== 檢查 6：前端 API 路徑 ==")
             miss = {}
             for d in (b, c):

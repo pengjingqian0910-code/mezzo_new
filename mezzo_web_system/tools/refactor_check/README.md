@@ -22,8 +22,8 @@ python mezzo_web_system/tools/refactor_check/run_checks.py \
 | `--db PATH` | 真實資料測試用的資料庫，預設 `mezzo_web_system/mezzo.db`（只讀，先複製一份） |
 | `--keep` | 保留暫存目錄（除錯用） |
 
-需要：`--python` 裡至少一個裝了 `pyflakes`（檢查 3）、一個裝了 `playwright` + Chromium（檢查 9）。
-目前兩者都裝在 `mezzo/` venv。兩種 Python 都跑，整輪大約 7–8 分鐘。
+需要：`--python` 裡至少一個裝了 `pyflakes`（檢查 3）、一個裝了 `playwright` + Chromium（檢查 9、9b）。
+目前兩者都裝在 `mezzo/` venv。兩種 Python 都跑，整輪大約 9 分鐘。
 
 結果代號：`PASS` 與基準相同、`CHANGED` 行為有變（只有預期中的修正可以接受，要看差異）、
 `REVIEW` 需要人工確認、`SKIP` 沒跑到、`FAIL` 有問題。
@@ -62,6 +62,7 @@ python mezzo_web_system/tools/refactor_check/run_checks.py \
 | 7 | `git diff --check` 與 diff 範圍 | run_checks.py 內建 |
 | 8 | 正在跑的伺服器（`--live`，只 GET） | run_checks.py 內建 |
 | 9 | 瀏覽器：首頁、登入、9 個分頁的 JS 錯誤／請求失敗 | `browser_check.py` |
+| 9b | 警戒區設定頁實際繪製流程：畫 → 存 → 重新整理 → 停用 → 刪除，用截圖像素判斷頂點（紅／灰／沒有）；截圖用 `--keep` 保留 | `browser_geofence_draw.py` |
 | 10 | 同一個檔案沒有被載入成兩個模組（例如 `database` 與 `core.database`） | `module_identity.py` |
 
 檢查 0、3 會掃 app 裡所有 `.py`（含 `core/`、`features/` 等子資料夾），不含 `tools/`、`static/`、`js/` 與「拷貝」備份檔。
@@ -86,6 +87,8 @@ python mezzo_web_system/tools/refactor_check/run_checks.py \
   - **新增測試時：如果那支測試需要真的連到外部（例如測真實 NVR），就不要 import `_guard`**，否則一定連不上。
 - **檢查 4（實際啟動）** 照常連線 MQTT broker（跟平常啟動一樣），資料只寫進暫存複本的資料庫。
 - **檢查 9（瀏覽器）** 啟動伺服器時把 NVR／MQTT 指到 127.0.0.1，不會碰到實際設備。外部 CDN（Vue、Cesium）照常從網路載入。
+- **檢查 9b（警戒區繪製）** 同上，NVR／MQTT 指到 127.0.0.1；地圖圖磚（Google）要從網路載入，**沒網路會判斷錯誤**。
+  它用固定螢幕位置的像素顏色判斷頂點，之後如果改了頂點顏色／大小或地圖預設位置，要跟著調整。
 - **真實資料**：用 sqlite backup API 以唯讀方式複製，不改原檔；輸出只有雜湊，不印資料內容。
 
 ## 注意
