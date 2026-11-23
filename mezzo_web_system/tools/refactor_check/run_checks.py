@@ -311,36 +311,57 @@ def main():
                 print("      " + "\n      ".join(rc_.splitlines()[:3]) + "\n      …")
                 compare(tag, "檢查 5 realdb", rb, rc_, changed_status="CHANGED")
 
+            print("== 檢查 11：外部廠商用 JWT 打 v1 API（真的 HTTP，uvicorn main:app 啟動、會重啟一次）==")
+            ob = run(py, "vendor_jwt.py", b, "local", b, py)
+            oc = run(py, "vendor_jwt.py", c, "local", c, py)
+            if "done" not in oc.splitlines():
+                record(tag, "檢查 11 外部廠商 JWT", "FAIL", "目前版本沒有跑完")
+                print(oc[-2000:])
+            else:
+                compare(tag, "檢查 11 外部廠商 JWT", ob, oc, changed_status="CHANGED")
+
             print("== 檢查 9：瀏覽器自動化 ==")
             if not browser_py:
                 record(tag, "檢查 9 瀏覽器", "SKIP", "--python 裡沒有裝 playwright 的 Python")
             else:
-                outs = {}
+                outs, errs = {}, {}
                 for d in (b, c):
                     clean(d)
-                    outs[d] = subprocess.run([browser_py, os.path.join(HERE, "browser_check.py"), d, py,
-                                              os.path.join(work, f"browser_{os.path.basename(d)}.log")],
-                                             capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                             timeout=600, env=dict(os.environ, PYTHONIOENCODING="utf-8")).stdout
+                    # 原本：outs[d] = subprocess.run([...], ...).stdout
+                    # [修改] 另外收 stderr：沒跑完時印出來，才查得到原因（stdout 仍是比對的內容）
+                    r = subprocess.run([browser_py, os.path.join(HERE, "browser_check.py"), d, py,
+                                        os.path.join(work, f"browser_{os.path.basename(d)}.log")],
+                                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                       timeout=600, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                    outs[d], errs[d] = r.stdout, r.stderr
                     clean(d)
                 if "SERVER DID NOT START" in outs[c] or "done" not in outs[c]:
                     record(tag, "檢查 9 瀏覽器", "FAIL", "目前版本沒有跑完")
                     print(outs[c][-2000:])
+                    print("      stderr：\n" + errs[c][-3000:])
                 else:
                     compare(tag, "檢查 9 瀏覽器（各步驟的錯誤）", outs[b], outs[c])
 
                 print("== 檢查 9b：警戒區繪製流程（截圖像素判斷頂點）==")
-                outs = {}
+                outs, errs, shot_dirs = {}, {}, {}
                 for d in (b, c):
                     clean(d)
                     shots = os.path.join(work, f"geofence_draw_{os.path.basename(d)}_{os.path.basename(os.path.dirname(os.path.dirname(py)))}")
-                    outs[d] = subprocess.run([browser_py, os.path.join(HERE, "browser_geofence_draw.py"), d, py, shots],
-                                             capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                             timeout=600, env=dict(os.environ, PYTHONIOENCODING="utf-8")).stdout
+                    shot_dirs[d] = shots
+                    # 原本：outs[d] = subprocess.run([...], ...).stdout
+                    # [修改] 另外收 stderr：沒跑完時印出來，才查得到原因（stdout 仍是比對的內容）
+                    r = subprocess.run([browser_py, os.path.join(HERE, "browser_geofence_draw.py"), d, py, shots],
+                                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                       timeout=600, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+                    outs[d], errs[d] = r.stdout, r.stderr
                     clean(d)
                 print("      " + "\n      ".join(outs[c].splitlines()))
                 if "done" not in outs[c]:
                     record(tag, "檢查 9b 警戒區繪製", "FAIL", "目前版本沒有跑完")
+                    print("      stderr：\n" + errs[c][-3000:])
+                    log_p = os.path.join(shot_dirs[c], "server.log")
+                    if os.path.exists(log_p):
+                        print("      伺服器日誌最後幾行：\n" + open(log_p, encoding="utf-8", errors="replace").read()[-1500:])
                 else:
                     compare(tag, "檢查 9b 警戒區繪製", outs[b], outs[c], changed_status="CHANGED")
 

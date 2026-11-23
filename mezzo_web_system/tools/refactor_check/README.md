@@ -64,6 +64,7 @@ python mezzo_web_system/tools/refactor_check/run_checks.py \
 | 9 | 瀏覽器：首頁、登入、9 個分頁的 JS 錯誤／請求失敗 | `browser_check.py` |
 | 9b | 警戒區設定頁實際繪製流程：畫 → 存 → 重新整理 → 停用 → 刪除，用截圖像素判斷頂點（紅／灰／沒有）；截圖用 `--keep` 保留 | `browser_geofence_draw.py` |
 | 10 | 同一個檔案沒有被載入成兩個模組（例如 `database` 與 `core.database`） | `module_identity.py` |
+| 11 | 扮演外部廠商：用 `uvicorn main:app`（沒有 reload，跟 Docker 同一種啟動方式）啟動，透過真的 HTTP／WebSocket 用 JWT 打每個 v1 API；含竄改／過期／alg=none 等不正常 token、權限、登出、伺服器重啟後 JWT 仍有效 | `vendor_jwt.py` |
 
 檢查 0、3 會掃 app 裡所有 `.py`（含 `core/`、`features/` 等子資料夾），不含 `tools/`、`static/`、`js/` 與「拷貝」備份檔。
 
@@ -89,6 +90,9 @@ python mezzo_web_system/tools/refactor_check/run_checks.py \
 - **檢查 9（瀏覽器）** 啟動伺服器時把 NVR／MQTT 指到 127.0.0.1，不會碰到實際設備。外部 CDN（Vue、Cesium）照常從網路載入。
 - **檢查 9b（警戒區繪製）** 同上，NVR／MQTT 指到 127.0.0.1；地圖圖磚（Google）要從網路載入，**沒網路會判斷錯誤**。
   它用固定螢幕位置的像素顏色判斷頂點，之後如果改了頂點顏色／大小或地圖預設位置，要跟著調整。
+- **檢查 11（外部廠商 JWT）** 啟動伺服器時 NVR／MQTT 指到 127.0.0.1，`JWT_SECRET` 設成固定的測試值（用來產生過期／竄改的 token）。
+  它要透過真的 HTTP 打伺服器，所以**不 import `_guard`**，改成只允許打 127.0.0.1／localhost。輸出會遮掉 token 與含帳密的網址。
+  也可以只跑用戶端打別的本機伺服器（例如 Docker 容器）：`python vendor_jwt.py client <url> 1 <狀態檔>`，重啟伺服器後再跑 `... 2 <狀態檔>`。
 - **真實資料**：用 sqlite backup API 以唯讀方式複製，不改原檔；輸出只有雜湊，不印資料內容。
 
 ## 注意
