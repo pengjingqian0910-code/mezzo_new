@@ -14,15 +14,28 @@ names = ["MQTT_BROKER_HOST", "MQTT_BROKER_PORT", "MQTT_TOPIC", "NVR_HOST", "NVR_
          "JWT_EXPIRE_HOURS", "AIOHTTP_AVAILABLE", "WEBRTC_AVAILABLE", "STT_AVAILABLE", "TAK_TCP_PORT"]
 # [更新] 拆 auth.py 後，JWT_SECRET、_pyjwt 只有 core/auth.py 在用，main.py 不再 import。
 #        名稱在 main 找不到時改從 core/auth.py 讀（輸出格式不變）；兩邊都沒有才印「沒有這個名稱」。
+# [更新] 拆 tak.py 後，TAK_TCP_PORT 只有 features/tak.py 在用，main.py 不再有這個名稱；
+#        改成依序找 main → core.auth → features.tak（還沒拆出來的版本 import 不到就跳過）。
+_FALLBACK_MODULES = ["core.auth", "features.tak"]
+
+
 def _find(n):
     if hasattr(main, n):
         return True, getattr(main, n)
-    try:
-        import core.auth as _auth
-    except ImportError:
-        return False, None
-    if hasattr(_auth, n):
-        return True, getattr(_auth, n)
+    # 原本：try:
+    # 原本：    import core.auth as _auth
+    # 原本：except ImportError:
+    # 原本：    return False, None
+    # 原本：if hasattr(_auth, n):
+    # 原本：    return True, getattr(_auth, n)
+    import importlib
+    for mod_name in _FALLBACK_MODULES:
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            continue
+        if hasattr(mod, n):
+            return True, getattr(mod, n)
     return False, None
 
 
