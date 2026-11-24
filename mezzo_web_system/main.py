@@ -291,18 +291,10 @@ async def get_index():
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ====== WebSocket 管理器 ======
-class ConnectionManager:
-    def __init__(self): self.active_connections = []
-    async def connect(self, ws: WebSocket): await ws.accept(); self.active_connections.append(ws)
-    def disconnect(self, ws: WebSocket):
-        if ws in self.active_connections: self.active_connections.remove(ws)
-    async def broadcast(self, msg: dict):
-        for conn in list(self.active_connections):
-            try: await conn.send_json(msg)
-            except: self.active_connections.remove(conn)
-
-manager     = ConnectionManager()
-ptt_manager = ConnectionManager()
+# ConnectionManager、manager、ptt_manager 搬到 core/ws_manager.py 了（原樣搬移）
+# main.py 只用到 manager、ptt_manager 兩個實例，ConnectionManager 類別本身不再用到，所以不匯入
+# 原本會用到的寫法：from core.ws_manager import ConnectionManager, manager, ptt_manager
+from core.ws_manager import manager, ptt_manager
 
 # ====== 設備即時狀態 (記憶體) ======
 devices_state: dict = {}
