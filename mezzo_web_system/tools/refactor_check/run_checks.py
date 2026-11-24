@@ -107,6 +107,40 @@ def compare(env, name, b_out, c_out, changed_status="FAIL"):
         show_diff(b_out, c_out)
 
 
+def compare_snapshot(env, name, b_out, c_out):
+    """檢查 1 專用。拆 router 時，路由的 endpoint 一定會從 main.xxx 變成 新模組.xxx，這是預期中的變化。
+    做法：把目前快照裡「基準是 main.函式名、目前是 其他模組.同一個函式名」的 endpoint 換回基準的值，
+    換完之後整份快照（路由順序、路徑、方法、參數、依賴、資料表、啟動事件）必須跟基準完全相同才算 PASS，
+    並列出搬走的路由；其他任何差異（函式名稱不同、路由數量或順序不同、不是從 main 搬出…）照舊 FAIL。"""
+    if b_out == c_out:
+        record(env, name, "PASS", "與基準相同")
+        return
+    try:
+        bj, cj = json.loads(b_out), json.loads(c_out)
+    except Exception:
+        compare(env, name, b_out, c_out)
+        return
+    moved = []
+    br, cr = bj.get("routes", []), cj.get("routes", [])
+    if len(br) == len(cr):
+        for x, y in zip(br, cr):
+            be, ce = x.get("endpoint"), y.get("endpoint")
+            if not be or not ce or be == ce or not be.startswith("main."):
+                continue
+            qual = be[len("main."):]
+            mod = ce[:-len("." + qual)] if ce.endswith("." + qual) else None
+            if mod and mod != "main":
+                y["endpoint"] = be
+                moved.append((x.get("path"), sorted(x.get("methods") or []), mod, qual))
+    if moved and json.dumps(bj, sort_keys=True) == json.dumps(cj, sort_keys=True):
+        mods = sorted({m for _, _, m, _ in moved})
+        record(env, name, "PASS", f"與基準相同；{len(moved)} 個路由的處理函式從 main 搬到 {', '.join(mods)}（預期中的變化）")
+        for path, methods, mod, qual in moved:
+            print(f"      搬移  {'/'.join(methods) or '-':10} {path:45} main.{qual} → {mod}.{qual}")
+    else:
+        compare(env, name, b_out, c_out)
+
+
 # ---------------------------------------------------------------- 檢查 0：函式/類別搬移比對
 SKIP_DIRS = {"tools", "static", "js", "__pycache__", ".github"}
 
@@ -263,7 +297,9 @@ def main():
                 run(py, "snapshot.py", d, os.path.join(work, f"snap_{os.path.basename(d)}.json"))
                 p = os.path.join(work, f"snap_{os.path.basename(d)}.json")
                 outs[d] = open(p, encoding="utf-8").read() if os.path.exists(p) else "<snapshot 失敗>"
-            compare(tag, "檢查 1 快照", outs[b], outs[c])
+            # [更新] 拆 router 時 endpoint 由 main.xxx 變成 新模組.xxx 屬預期，改用 compare_snapshot 判斷（說明見函式）
+            # 原本：compare(tag, "檢查 1 快照", outs[b], outs[c])
+            compare_snapshot(tag, "檢查 1 快照", outs[b], outs[c])
 
             print("== 檢查 10：模組重複載入 ==")
             mi = run(py, "module_identity.py", c)

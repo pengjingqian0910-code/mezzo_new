@@ -49,7 +49,7 @@ python mezzo_web_system/tools/refactor_check/run_checks.py \
 | # | 檢查 | 腳本 |
 |---|---|---|
 | 0 | 函式／類別搬移與修改（AST 比對） | run_checks.py 內建 |
-| 1 | 路由與資料表快照（路徑、方法、參數、依賴、欄位） | `snapshot.py` |
+| 1 | 路由與資料表快照（路徑、方法、參數、依賴、欄位）。拆 router 時處理函式由 `main.xxx` 變成 `新模組.xxx`（同名）視為預期、判 PASS 並列出搬移；其他任何差異仍 FAIL | `snapshot.py` |
 | 2 | TestClient 打 API | `smoke.py` |
 | 3 | pyflakes：不能新增 undefined name | run_checks.py 內建 |
 | 4 | `python main.py` 實際啟動：打 API、比對啟動日誌 | `launch_check.py` |

@@ -16,7 +16,9 @@ names = ["MQTT_BROKER_HOST", "MQTT_BROKER_PORT", "MQTT_TOPIC", "NVR_HOST", "NVR_
 #        名稱在 main 找不到時改從 core/auth.py 讀（輸出格式不變）；兩邊都沒有才印「沒有這個名稱」。
 # [更新] 拆 tak.py 後，TAK_TCP_PORT 只有 features/tak.py 在用，main.py 不再有這個名稱；
 #        改成依序找 main → core.auth → features.tak（還沒拆出來的版本 import 不到就跳過）。
-_FALLBACK_MODULES = ["core.auth", "features.tak"]
+# [更新] 拆 nvr.py 後，NVR_MEDIA_PATH 只有 features/nvr.py 在用，加上 features.nvr。
+# 原本：_FALLBACK_MODULES = ["core.auth", "features.tak"]
+_FALLBACK_MODULES = ["core.auth", "features.tak", "features.nvr"]
 
 
 def _find(n):
