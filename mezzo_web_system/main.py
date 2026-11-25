@@ -65,7 +65,9 @@ from features.stt import _load_whisper_model, pcm_to_wav_bytes, transcribe_bilin
 from core.database import (
     engine, SessionLocal, Base,
     User, Device, NVRConfig, MqttConfig, SocialMediaConfig, TakServerConfig,
-    GpsRecord, WhatsAppLog, SosRecord, PttRecord,
+    # [拆分 social.py] WhatsAppLog 只有 process_transcript_and_notify 與 /api/social/logs 在用，已隨函式搬到 features/social.py，main.py 不再使用
+    # 原本：GpsRecord, WhatsAppLog, SosRecord, PttRecord,
+    GpsRecord, SosRecord, PttRecord,
     get_db,
 )
 
@@ -339,42 +341,13 @@ async def telemetry_broadcaster():
 # 在上面「STT 相依套件」的位置匯入
 
 # ====== WhatsApp 發送函式 ======
-def get_social_config():
-    db = SessionLocal()
-    cfg = db.query(SocialMediaConfig).first()
-    db.close()
-    return cfg
-
-def send_whatsapp_message(phone: str, message: str, cfg: SocialMediaConfig) -> tuple:
-    phone = phone.strip().lstrip('+')
-    if not phone: return False, "no phone"
-    try:
-        import urllib.request as _ur
-        if cfg.provider == "meta":
-            url     = f"https://graph.facebook.com/v19.0/{cfg.phone_number_id}/messages"
-            headers = {"Authorization": f"Bearer {cfg.access_token}", "Content-Type": "application/json"}
-            payload = {"messaging_product": "whatsapp", "to": phone, "type": "text", "text": {"body": message}}
-            req = _ur.Request(url, data=json.dumps(payload).encode(), headers=headers, method='POST')
-            with _ur.urlopen(req, timeout=10) as resp:
-                return resp.status in (200, 201), resp.read().decode()
-        elif cfg.provider == "twilio":
-            from_num = f"whatsapp:+{cfg.phone_number_id.strip().lstrip('+')}"
-            to_num   = f"whatsapp:+{phone}"
-            auth_str = base64.b64encode(f"{cfg.account_sid}:{cfg.access_token}".encode()).decode()
-            data = urllib.parse.urlencode({"From": from_num, "To": to_num, "Body": message}).encode()
-            req  = _ur.Request(
-                f"https://api.twilio.com/2010-04-01/Accounts/{cfg.account_sid}/Messages.json",
-                data=data, headers={"Authorization": f"Basic {auth_str}"}, method='POST'
-            )
-            with _ur.urlopen(req, timeout=10) as resp:
-                return resp.status in (200, 201), resp.read().decode()
-    except Exception as e:
-        return False, str(e)
-    return False, "unknown provider"
-
-def generate_viewer_url(device_id: str, cfg: SocialMediaConfig) -> str:
-    base = (cfg.public_url or "").rstrip('/')
-    return f"{base}/view/{device_id}" if base else f"/view/{device_id}"
+# get_social_config、send_whatsapp_message、generate_viewer_url 搬到 features/social.py 了（原樣搬移）。
+# 下面 geofence.init_router() 還要用這 3 個函式，所以 init_router 留在原位、從 social 匯入；
+# process_transcript_and_notify 與 /api/social/* 路由也一起搬過去了
+from features.social import (
+    get_social_config, send_whatsapp_message, generate_viewer_url, process_transcript_and_notify,
+    router as social_router,
+)
 
 # 警戒區 router 需要的依賴（get_current_user、manager、send_whatsapp_message...）到這裡都齊了，
 # 呼叫 geofence.init_router() 組出 router 跟偵測函式。
@@ -384,49 +357,8 @@ geofence_router, check_geofence_and_notify = geofence.init_router(
 )
 app.include_router(geofence_router)
 
-async def process_transcript_and_notify(device_id: str, transcript: str, source: str = "mqtt"):
-    if not transcript: return
-    cfg         = get_social_config()
-    keyword     = (cfg.stt_keyword if cfg else None) or "影像傳送"
-    keyword_hit = keyword in transcript
-    stream_url  = ""
-    status      = "keyword_not_found"
-    recipients  = ""
-
-    if keyword_hit and cfg and cfg.is_enabled:
-        stream_url = generate_viewer_url(device_id, cfg)
-        db = SessionLocal()
-        users_wa = db.query(User).filter(User.whatsapp != None, User.whatsapp != "").all()
-        db.close()
-        if not users_wa:
-            status = "no_recipients"
-        else:
-            db2 = SessionLocal()
-            dev = db2.query(Device).filter(Device.device_id == device_id).first()
-            db2.close()
-            dev_name = dev.name if dev else device_id
-            msg = (f"🚨 *WiB EOC 緊急通知*\n設備: {dev_name} ({device_id})\n"
-                   f"時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                   f"語音內容: {transcript}\n──────────────\n"
-                   f"📹 即時影像：\n{stream_url}\n──────────────\nWiB EOC 緊急調度指揮系統")
-            results = []
-            for u in users_wa:
-                ok, err = send_whatsapp_message(u.whatsapp, msg, cfg)
-                results.append(f"{u.whatsapp}:{'ok' if ok else err[:30]}")
-            recipients = ",".join(u.whatsapp for u in users_wa)
-            status = "sent" if all(r.endswith(":ok") for r in results) else "partial"
-    elif keyword_hit and (not cfg or not cfg.is_enabled):
-        status = "disabled"
-
-    db3 = SessionLocal()
-    db3.add(WhatsAppLog(
-        timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        device_id=device_id, source=source,
-        transcript=transcript, keyword_detected=keyword_hit,
-        stream_url=stream_url, recipients=recipients, status=status
-    ))
-    db3.commit()
-    db3.close()
+# process_transcript_and_notify 搬到 features/social.py 了（原樣搬移）；
+# 下面的 mqtt_stt_worker 與 PTT 上傳 API 還會用到，在上面「WhatsApp 發送函式」的位置匯入
 
 async def mqtt_stt_worker():
     while True:
@@ -822,48 +754,8 @@ def get_ptt_records(group_id: int = None, db: Session = Depends(get_db)):
              "audio_url": r.audio_url, "timestamp": r.timestamp} for r in records]
 
 # ====== Social Media / WhatsApp API ======
-@app.get("/api/social/config")
-def get_social_cfg(db: Session = Depends(get_db)):
-    cfg = db.query(SocialMediaConfig).first()
-    if not cfg: return {}
-    return {"provider": cfg.provider, "access_token": cfg.access_token,
-            "phone_number_id": cfg.phone_number_id, "account_sid": cfg.account_sid,
-            "public_url": cfg.public_url, "stt_keyword": cfg.stt_keyword,
-            "is_enabled": cfg.is_enabled}
-
-@app.put("/api/social/config")
-def update_social_cfg(data: dict, db: Session = Depends(get_db),
-                      _user: dict = Depends(require_admin)):
-    cfg = db.query(SocialMediaConfig).first()
-    if not cfg: cfg = SocialMediaConfig(); db.add(cfg)
-    for field in ("provider", "access_token", "phone_number_id", "account_sid",
-                  "public_url", "stt_keyword", "is_enabled"):
-        if field in data: setattr(cfg, field, data[field])
-    db.commit()
-    return {"msg": "設定已儲存"}
-
-@app.get("/api/social/logs")
-def get_social_logs(limit: int = 50, db: Session = Depends(get_db)):
-    logs = db.query(WhatsAppLog).order_by(WhatsAppLog.id.desc()).limit(limit).all()
-    return [{"id": l.id, "timestamp": l.timestamp, "device_id": l.device_id,
-             "source": l.source, "transcript": l.transcript,
-             "keyword_detected": l.keyword_detected, "stream_url": l.stream_url,
-             "recipients": l.recipients, "status": l.status} for l in logs]
-
-@app.post("/api/social/test")
-async def test_whatsapp(data: dict, db: Session = Depends(get_db)):
-    cfg = db.query(SocialMediaConfig).first()
-    if not cfg: raise HTTPException(400, "尚未設定 WhatsApp 參數")
-    phone = data.get("phone", "").strip()
-    msg   = data.get("message", "WiB EOC 測試訊息 — 系統運作正常 ✅")
-    ok, detail = send_whatsapp_message(phone, msg, cfg)
-    return {"success": ok, "detail": detail}
-
-@app.get("/api/social/stt_status")
-def stt_status():
-    # [拆分 stt.py] STT_AVAILABLE 會在啟動後改變，改用 stt.is_available() 在當下讀取
-    # 原本：return {"available": STT_AVAILABLE, "model": "faster-whisper base" if STT_AVAILABLE else None}
-    return {"available": stt.is_available(), "model": "faster-whisper base" if stt.is_available() else None}
+# 5 個 /api/social/* 路由搬到 features/social.py 了（原樣搬移，@app 改 @router）；在原本的位置 include，路由順序跟搬移前一樣
+app.include_router(social_router)
 
 # ====== 獨立影像檢視頁面 ／ WebRTC API ======
 # /view/{device_id} 頁面、webrtc_pcs、MJPEGStreamTrack／RTSPStreamTrack／_make_video_track、WebRTCOfferBody、DeviceOfferBody、
