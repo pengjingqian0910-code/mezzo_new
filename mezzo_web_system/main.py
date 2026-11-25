@@ -2,22 +2,28 @@
 # 原本：import asyncio, random, json, os, time, base64, io, uuid, wave, re, secrets
 # [拆分 stt.py] io、wave 只有 STT 的 pcm_to_wav_bytes／transcribe_pcm_bytes 在用，已隨函式搬到 features/stt.py，main.py 不再使用
 # 原本：import asyncio, random, json, os, time, base64, io, uuid, wave, re
-import asyncio, random, json, os, time, base64, uuid, re
+# [拆分 mqtt_handler.py] uuid 只有 MQTT SOS 廣播的 id 在用，已隨 on_mqtt_message 搬到 features/mqtt_handler.py，main.py 不再使用
+# 原本：import asyncio, random, json, os, time, base64, uuid, re
+import asyncio, random, json, os, time, base64, re
 import urllib.request
 import urllib.parse
 # [拆分 nvr_viewer.py] ET 只有 NVR Viewer 的 record_status 在用，已隨路由搬到 features/nvr_viewer.py，main.py 不再使用
 # import xml.etree.ElementTree as ET
 # [拆分 tak.py] timedelta 只有 TAK 的 _cot_time 在用，已隨 TAK 程式搬到 features/tak.py，main.py 不再使用
 # from datetime import timedelta
-import paho.mqtt.client as mqtt
+# [拆分 mqtt_handler.py] paho 的 mqtt 只有 mqtt.Client() 在用，已隨 MQTT 程式搬到 features/mqtt_handler.py，main.py 不再使用
+# import paho.mqtt.client as mqtt
 from datetime import datetime
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
-from pydantic import BaseModel
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header, File, UploadFile, Form
+# [拆分 mqtt_handler.py] BaseModel 只有 MqttConfigBody 在用，已隨 /api/mqtt/* 搬到 features/mqtt_handler.py，main.py 不再使用
+# from pydantic import BaseModel
+# [拆分 mqtt_handler.py] WebSocketDisconnect 只有 /ws/map-data、/ws/ptt 在用，已隨端點搬到 features/mqtt_handler.py，main.py 不再使用
+# 原本：from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header, File, UploadFile, Form
+from fastapi import FastAPI, WebSocket, Depends, HTTPException, Header, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 # [拆分 webrtc.py] HTMLResponse 只有 /view/{device_id} 在用，已隨路由搬到 features/webrtc.py，main.py 不再使用
@@ -53,7 +59,9 @@ from core.config import (
 # faster-whisper 選裝檢查、_whisper_model、STT_AVAILABLE、_load_whisper_model 搬到 features/stt.py 了（原樣搬移）。
 # STT_AVAILABLE 啟動後才會變成 True，所以 main.py 不匯入它，改用 stt.is_available() 讀取（見 stt.py 說明）
 from features import stt
-from features.stt import _load_whisper_model, pcm_to_wav_bytes, transcribe_bilingual, transcribe_pcm_bytes
+# [拆分 mqtt_handler.py] transcribe_pcm_bytes 只有 mqtt_stt_worker 在用，已隨它搬到 features/mqtt_handler.py，main.py 不再匯入
+# 原本：from features.stt import _load_whisper_model, pcm_to_wav_bytes, transcribe_bilingual, transcribe_pcm_bytes
+from features.stt import _load_whisper_model, pcm_to_wav_bytes, transcribe_bilingual
 
 # ====== WebRTC 相依套件（選裝）======
 # WebRTC 選裝檢查（av、aiortc、WEBRTC_AVAILABLE）搬到 features/webrtc.py 了（原樣搬移），
@@ -88,7 +96,9 @@ Base.metadata.create_all(bind=engine)
 # ====== TAK TCP Server（供 ATAK 客戶端連線）／ TAK / CoT 模組 ======
 # TAK_TCP_PORT、_tak_clients、TCP Server、CoT 產生與送出、forward_gps_to_tak 搬到 features/tak.py 了（原樣搬移）
 # 下面的 TAK Server APIs（5 個 /api/tak/* 路由）也一起搬過去，改成 router，在原位置 include_router
-from features.tak import forward_gps_to_tak, _start_tak_tcp_server, router as tak_router
+# [拆分 mqtt_handler.py] forward_gps_to_tak 只有 on_mqtt_message 在用，已隨它搬到 features/mqtt_handler.py，main.py 不再匯入
+# 原本：from features.tak import forward_gps_to_tak, _start_tak_tcp_server, router as tak_router
+from features.tak import _start_tak_tcp_server, router as tak_router
 
 # ====== Session Token 管理（Web UI 用）／ JWT 工具（v1 API 用）======
 # _sessions、create_session、get_current_user、_v1_err、_create_jwt、_decode_jwt、
@@ -99,23 +109,23 @@ from core.auth import (
 )
 
 # ====== NVR / MQTT 動態設定輔助函式 ======
-# _get_nvr_cfg、_nvr_auth_b64、_nvr_base_url 搬到 features/nvr.py 了（原樣搬移）；_get_mqtt_cfg 屬於 MQTT，留在這裡
+# [拆分 mqtt_handler.py] _get_mqtt_cfg 也搬到 features/mqtt_handler.py 了
+# 原本：# _get_nvr_cfg、_nvr_auth_b64、_nvr_base_url 搬到 features/nvr.py 了（原樣搬移）；_get_mqtt_cfg 屬於 MQTT，留在這裡
+# _get_nvr_cfg、_nvr_auth_b64、_nvr_base_url 搬到 features/nvr.py 了（原樣搬移）
 from features.nvr import (
     _get_nvr_cfg, _nvr_auth_b64, _nvr_base_url,
     config_router as nvr_config_router, router as nvr_router,
 )
 
-def _get_mqtt_cfg():
-    db = SessionLocal()
-    try:
-        cfg = db.query(MqttConfig).first()
-        if not cfg:
-            cfg = MqttConfig()
-            db.add(cfg)
-            db.commit()
-        return cfg
-    finally:
-        db.close()
+# [拆分 mqtt_handler.py] _get_mqtt_cfg 與 MQTT 相關程式（共用狀態、mqtt_client、收訊息處理、/ws/map-data、/ws/ptt、
+# GPS／SOS 存檔、定期廣播、mqtt_stt_worker、/api/mqtt/*）搬到 features/mqtt_handler.py 了（原樣搬移），
+# main.py 匯入還會用到的名稱；兩個 router 各在原本的位置 include
+from features import mqtt_handler
+from features.mqtt_handler import (
+    _get_mqtt_cfg, devices_state, _audio_ws_queues, mqtt_client,
+    telemetry_broadcaster, mqtt_stt_worker,
+    router as mqtt_ws_router, config_router as mqtt_config_router,
+)
 
 # ====== FastAPI ======
 app = FastAPI(title="WiB VMS Web System")
@@ -132,209 +142,29 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # ConnectionManager、manager、ptt_manager 搬到 core/ws_manager.py 了（原樣搬移）
 # main.py 只用到 manager、ptt_manager 兩個實例，ConnectionManager 類別本身不再用到，所以不匯入
 # 原本會用到的寫法：from core.ws_manager import ConnectionManager, manager, ptt_manager
-from core.ws_manager import manager, ptt_manager
+# [拆分 mqtt_handler.py] ptt_manager 只有 on_mqtt_message、/ws/ptt 在用，已隨它們搬到 features/mqtt_handler.py，main.py 不再匯入
+# 原本：from core.ws_manager import manager, ptt_manager
+from core.ws_manager import manager
 
 # ====== 設備即時狀態 (記憶體) ======
-devices_state: dict = {}
-
-# PTT 音訊緩衝區（STT 用）
-ptt_buffers: dict = {}
-
-# v1 API 即時音訊訂閱佇列：device_id → set of asyncio.Queue
-_audio_ws_queues: dict = {}
+# devices_state、ptt_buffers、_audio_ws_queues 搬到 features/mqtt_handler.py 了（原樣搬移）；
+# 下面的位置 API、v1 API 用到的 devices_state、_audio_ws_queues 在上面匯入（同一個物件）
 
 # ====== MQTT ======
-mqtt_client  = mqtt.Client()
-fastapi_loop = None
-
-def on_mqtt_connect(client, userdata, flags, rc):
-    cfg = _get_mqtt_cfg()
-    print(f"[MQTT] connected to {cfg.ip}:{cfg.port}, rc={rc}")
-    client.subscribe("WJI/PTT/#")
-    client.subscribe("WJI/GPS/#")
-    client.subscribe("/WJI/PTT/#")
-    client.subscribe("/WJI/GPS/#")
-
-def on_mqtt_message(client, userdata, msg):
-    topic = msg.topic.lstrip('/')
-
-    # 1. GPS 座標
-    if topic.endswith("/GPS") or topic.startswith("WJI/GPS/"):
-        try:
-            raw     = msg.payload
-            dev_id  = None
-            lat = lng = None
-            battery = 0
-            status  = "Online"
-            try:
-                data   = json.loads(raw.decode('utf-8'))
-                dev_id = data.get("device_id")
-                lng    = data.get("lng")
-                lat    = data.get("lat")
-                battery = data.get("battery", 0) or 0
-                status  = data.get("status", "Online") or "Online"
-            except Exception:
-                pass
-            if dev_id is None:
-                txt   = raw.decode('ascii', errors='ignore')
-                match = re.search(r'([0-9A-Fa-f]{12}),(-?\d+\.\d+),(-?\d+\.\d+)', txt)
-                if match:
-                    dev_id = match.group(1).upper()
-                    lat    = float(match.group(2))
-                    lng    = float(match.group(3))
-            if dev_id and lng is not None and lat is not None:
-                if dev_id not in devices_state:
-                    devices_state[dev_id] = {"lng": lng, "lat": lat, "battery": battery,
-                                             "status": status, "last_real_time": 0}
-                devices_state[dev_id].update({"lng": lng, "lat": lat, "battery": battery,
-                                              "status": status, "last_real_time": time.time()})
-                if fastapi_loop:
-                    asyncio.run_coroutine_threadsafe(
-                        _save_gps_record(dev_id, lat, lng, battery, status, source="mqtt"),
-                        fastapi_loop
-                    )
-                    asyncio.run_coroutine_threadsafe(
-                        forward_gps_to_tak(dev_id, lat, lng, battery),
-                        fastapi_loop
-                    )
-                    asyncio.run_coroutine_threadsafe(
-                        check_geofence_and_notify(dev_id, lat, lng),
-                        fastapi_loop
-                    )
-        except Exception as e:
-            print(f"[MQTT GPS] exception: {e}")
-
-    # 2. PTT 封包
-    elif topic.startswith("WJI/PTT/"):
-        # SOS 偵測
-        if topic.endswith('/SOS'):
-            try:
-                raw      = msg.payload
-                dev_id   = raw[32:160].decode('ascii', errors='ignore').rstrip('\x00').strip().upper()
-                data_str = raw[160:].decode('ascii', errors='ignore').rstrip('\x00').strip()
-                parts    = data_str.split(',')
-                lat      = float(parts[0]) if len(parts) >= 1 else 0.0
-                lng      = float(parts[1]) if len(parts) >= 2 else 0.0
-                t_parts  = topic.split('/')
-                channel  = t_parts[2] if len(t_parts) >= 3 else 'UNKNOWN'
-                ts       = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                print(f"🆘 [MQTT SOS] device={dev_id} channel={channel}")
-                if fastapi_loop:
-                    asyncio.run_coroutine_threadsafe(
-                        _save_sos_record(dev_id, channel, lat, lng, ts), fastapi_loop)
-                    asyncio.run_coroutine_threadsafe(
-                        manager.broadcast({"type": "sos_alert", "data": {
-                            "id": str(uuid.uuid4()), "device_id": dev_id,
-                            "channel": channel, "lat": lat, "lng": lng, "timestamp": ts
-                        }}), fastapi_loop)
-            except Exception as e:
-                print(f"[MQTT SOS] exception: {e}")
-
-        # PTT 音訊代理
-        if fastapi_loop and ptt_manager.active_connections:
-            payload_b64 = base64.b64encode(msg.payload).decode('utf-8')
-            asyncio.run_coroutine_threadsafe(
-                ptt_manager.broadcast({"topic": topic, "payload": payload_b64}),
-                fastapi_loop
-            )
-        # 轉發到 v1 API 即時語音訂閱佇列
-        if fastapi_loop and _audio_ws_queues:
-            t_parts  = topic.split('/')
-            dev_id_ptt = t_parts[-1] if len(t_parts) >= 3 else "unknown"
-            if dev_id_ptt in _audio_ws_queues:
-                payload_b64 = base64.b64encode(msg.payload).decode()
-                packet = {"type": "audio", "device_id": dev_id_ptt,
-                          "payload_b64": payload_b64,
-                          "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}
-                for q in list(_audio_ws_queues[dev_id_ptt]):
-                    if not q.full():
-                        asyncio.run_coroutine_threadsafe(q.put(packet), fastapi_loop)
-
-        # 累積供 STT 分析
-        # [拆分 stt.py] STT_AVAILABLE 會在啟動後改變，改用 stt.is_available() 在當下讀取
-        # 原本：if STT_AVAILABLE and msg.payload and fastapi_loop:
-        if stt.is_available() and msg.payload and fastapi_loop:
-            if topic not in ptt_buffers:
-                p = topic.split('/')
-                ptt_buffers[topic] = {"data": bytearray(), "last_update": 0.0,
-                                      "device_id": p[-1] if len(p) > 2 else "unknown"}
-            ptt_buffers[topic]["data"]        += msg.payload
-            ptt_buffers[topic]["last_update"]  = time.time()
-
-mqtt_client.on_connect = on_mqtt_connect
-mqtt_client.on_message = on_mqtt_message
+# mqtt_client、fastapi_loop、on_mqtt_connect、on_mqtt_message 搬到 features/mqtt_handler.py 了（原樣搬移）。
+# fastapi_loop 改由 startup 呼叫 mqtt_handler.set_fastapi_loop() 設定（見下方 startup_event）
 
 # ====== WebSocket Endpoints ======
-@app.websocket("/ws/map-data")
-async def websocket_map(websocket: WebSocket):
-    await manager.connect(websocket)
-    if devices_state:
-        await websocket.send_json({"type": "telemetry_update", "data": devices_state})
-    try:
-        while True: await websocket.receive_text()
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-
-@app.websocket("/ws/ptt")
-async def websocket_ptt(websocket: WebSocket):
-    await ptt_manager.connect(websocket)
-    try:
-        while True:
-            data = await websocket.receive_text()
-            msg  = json.loads(data)
-            if msg.get("action") == "publish":
-                mqtt_client.publish(msg.get("topic"), msg.get("payload", "").encode('utf-8'))
-    except WebSocketDisconnect:
-        ptt_manager.disconnect(websocket)
+# /ws/map-data、/ws/ptt 搬到 features/mqtt_handler.py 了（原樣搬移，@app 改 @router）；在原本的位置 include，路由順序跟搬移前一樣
+app.include_router(mqtt_ws_router)
 
 # ====== GPS 資料庫儲存 ======
-_gps_last_save: dict = {}
-GPS_SAVE_INTERVAL = 5
-
-async def _save_gps_record(device_id: str, lat, lng, battery: int = 0,
-                            status: str = "", source: str = "mqtt"):
-    now = time.time()
-    if now - _gps_last_save.get(device_id, 0) < GPS_SAVE_INTERVAL:
-        return
-    _gps_last_save[device_id] = now
-    db = SessionLocal()
-    try:
-        db.add(GpsRecord(device_id=device_id, lat=str(lat), lng=str(lng),
-                         battery=int(battery), status=status, source=source,
-                         timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        db.commit()
-    except Exception as e:
-        print(f"[GPS DB] 寫入錯誤: {e}")
-    finally:
-        db.close()
-
-async def _save_sos_record(device_id: str, channel: str, lat, lng, timestamp: str):
-    db = SessionLocal()
-    try:
-        db.add(SosRecord(device_id=device_id, channel=channel,
-                         lat=str(lat), lng=str(lng), timestamp=timestamp))
-        db.commit()
-    except Exception as e:
-        print(f"[SOS DB] 寫入錯誤: {e}")
-    finally:
-        db.close()
+# _gps_last_save、GPS_SAVE_INTERVAL、_save_gps_record、_save_sos_record 搬到 features/mqtt_handler.py 了（原樣搬移）
 
 # Geofence 伺服器端偵測 + 通知邏輯搬到 geofence.py 的 check_geofence_and_notify()
 
 # ====== 定期廣播 ======
-async def telemetry_broadcaster():
-    while True:
-        current_time = time.time()
-        payload = {}
-        for dev_id, state in devices_state.items():
-            is_simulated = current_time - state.get("last_real_time", 0) > 5
-            payload[dev_id] = {
-                "lng": state["lng"], "lat": state["lat"],
-                "battery": state["battery"], "status": state["status"],
-                "is_realtime": current_time - state.get("last_real_time", 0) <= 30
-            }
-        await manager.broadcast({"type": "telemetry_update", "data": payload})
-        await asyncio.sleep(1)
+# telemetry_broadcaster 搬到 features/mqtt_handler.py 了（原樣搬移），在上面匯入給 startup 用
 
 # ====== STT 函式 ======
 # pcm_to_wav_bytes、_google_translate、transcribe_bilingual、transcribe_pcm_bytes 搬到 features/stt.py 了（原樣搬移），
@@ -356,26 +186,14 @@ geofence_router, check_geofence_and_notify = geofence.init_router(
     User, Device, get_social_config, send_whatsapp_message, generate_viewer_url
 )
 app.include_router(geofence_router)
+# [拆分 mqtt_handler.py] MQTT 收到 GPS 時要呼叫 check_geofence_and_notify，但它是上面才產生的
+# （mqtt_handler 不能 import main），所以產生後交給 mqtt_handler
+mqtt_handler.set_geofence_checker(check_geofence_and_notify)
 
 # process_transcript_and_notify 搬到 features/social.py 了（原樣搬移）；
 # 下面的 mqtt_stt_worker 與 PTT 上傳 API 還會用到，在上面「WhatsApp 發送函式」的位置匯入
 
-async def mqtt_stt_worker():
-    while True:
-        await asyncio.sleep(1.0)
-        # [拆分 stt.py] STT_AVAILABLE 會在啟動後改變，改用 stt.is_available() 在當下讀取
-        # 原本：if not STT_AVAILABLE: continue
-        if not stt.is_available(): continue
-        now = time.time()
-        to_process = []
-        for topic, buf in list(ptt_buffers.items()):
-            if now - buf["last_update"] > 2.0 and len(buf["data"]) > 0:
-                to_process.append((topic, bytes(buf["data"]), buf["device_id"]))
-                ptt_buffers[topic]["data"] = bytearray()
-        for topic, audio_bytes, device_id in to_process:
-            loop = asyncio.get_running_loop()
-            transcript = await loop.run_in_executor(None, transcribe_pcm_bytes, audio_bytes)
-            await process_transcript_and_notify(device_id, transcript, source="mqtt")
+# mqtt_stt_worker 搬到 features/mqtt_handler.py 了（原樣搬移），在上面「MQTT 動態設定輔助函式」的位置匯入給 startup 用
 
 # ====== 獨立影像檢視頁面 (WhatsApp 連結用) ======
 # VIEWER_HTML_TEMPLATE 只有 /view/{device_id} 在用，已隨路由搬到 features/webrtc.py（原樣搬移）
@@ -431,8 +249,10 @@ def auto_init_db():
 
 @app.on_event("startup")
 async def startup_event():
-    global fastapi_loop
-    fastapi_loop = asyncio.get_running_loop()
+    # [拆分 mqtt_handler.py] fastapi_loop 搬到 features/mqtt_handler.py，這裡的 global 改不到它，改呼叫設定函式
+    # 原本：global fastapi_loop
+    # 原本：fastapi_loop = asyncio.get_running_loop()
+    mqtt_handler.set_fastapi_loop(asyncio.get_running_loop())
     auto_init_db()
     asyncio.create_task(telemetry_broadcaster())
     asyncio.create_task(mqtt_stt_worker())
@@ -605,33 +425,9 @@ def operator_self_bind(data: dict, db: Session = Depends(get_db),
 app.include_router(nvr_config_router)
 
 # ====== MQTT 動態設定 API ======
-@app.get("/api/mqtt/config")
-def get_mqtt_config_api():
-    cfg = _get_mqtt_cfg()
-    return {"ip": cfg.ip, "port": cfg.port}
-
-class MqttConfigBody(BaseModel):
-    ip: str; port: int
-
-@app.put("/api/mqtt/config")
-def update_mqtt_config(body: MqttConfigBody, db: Session = Depends(get_db),
-                       _user: dict = Depends(require_admin)):
-    cfg = db.query(MqttConfig).first()
-    if not cfg: cfg = MqttConfig(); db.add(cfg)
-    cfg.ip = body.ip; cfg.port = body.port
-    db.commit()
-    return {"msg": "MQTT 設定已儲存"}
-
-@app.post("/api/mqtt/reconnect")
-def mqtt_reconnect_api(_user: dict = Depends(require_admin)):
-    cfg = _get_mqtt_cfg()
-    try:
-        mqtt_client.disconnect()
-        time.sleep(0.5)
-        mqtt_client.connect(cfg.ip, cfg.port, 60)
-        return {"msg": f"Reconnecting to {cfg.ip}:{cfg.port}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# 3 個 /api/mqtt/* 路由與 MqttConfigBody 搬到 features/mqtt_handler.py 了（原樣搬移，@app 改 @config_router）；
+# 在原本的位置 include，路由順序跟搬移前一樣
+app.include_router(mqtt_config_router)
 
 # ====== TAK Server APIs ======
 # 5 個 /api/tak/* 路由與 TakConfigBody 搬到 features/tak.py 了（原樣搬移，@app 改 @router）
