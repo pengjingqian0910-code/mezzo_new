@@ -290,11 +290,18 @@ def update_mqtt_config(body: MqttConfigBody, db: Session = Depends(get_db),
 # 原本：@app.post("/api/mqtt/reconnect")
 @config_router.post("/api/mqtt/reconnect")
 def mqtt_reconnect_api(_user: dict = Depends(require_admin)):
+    # [修正 2026-11-25] 原本 disconnect() 會讓 paho 的背景網路執行緒（loop_start 開的 loop_forever）結束，
+    # 之後 connect() 只建立連線、沒有執行緒處理收發 → 連線完成不了、再也收不到 GPS/SOS/PTT，要重啟伺服器。
+    # 啟動時 broker 連不上（startup 沒執行到 loop_start）的情況，按重新連線也一樣收不到。
+    # 改成：disconnect 後 loop_stop() 等舊執行緒結束，connect 成功後 loop_start() 重新啟動執行緒。
+    # 連線失敗時照舊回 500。
     cfg = _get_mqtt_cfg()
     try:
         mqtt_client.disconnect()
+        mqtt_client.loop_stop()     # [修正] 新增
         time.sleep(0.5)
         mqtt_client.connect(cfg.ip, cfg.port, 60)
+        mqtt_client.loop_start()    # [修正] 新增
         return {"msg": f"Reconnecting to {cfg.ip}:{cfg.port}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
