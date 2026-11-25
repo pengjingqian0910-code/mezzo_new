@@ -240,7 +240,13 @@ def stop_server(p):
 def wait_up(base):
     for _ in range(60):
         try:
-            urllib.request.urlopen(base + "/api/geofences", timeout=2)
+            # 原本：urllib.request.urlopen(base + "/api/geofences", timeout=2)
+            # 原本沒讀回應內容就關閉連線：Windows 上關閉時若還有沒讀的資料會送出 RST（強制中斷），
+            # 伺服器端 asyncio（proactor_events.py _call_connection_lost 的 shutdown）就會隨機印出
+            # ConnectionResetError [WinError 10054]，讓檢查 11 的「伺服器日誌錯誤行數」隨機不同。
+            # 改成讀完回應再用 with 關閉，連線正常結束。
+            with urllib.request.urlopen(base + "/api/geofences", timeout=2) as r:
+                r.read()
             return True
         except Exception:
             time.sleep(1)
