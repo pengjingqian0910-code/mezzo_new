@@ -60,8 +60,12 @@ db.add(main.Device(device_id="DEV2", name="巡邏車2"))
 db.add(main.Geofence(name="管制區A", points=json.dumps(
     [{"lng": 121.0, "lat": 25.0}, {"lng": 121.1, "lat": 25.0}, {"lng": 121.1, "lat": 25.1}, {"lng": 121.0, "lat": 25.1}])))
 for i, ts in enumerate(["2026-01-01 10:00:00", "2026-01-01 11:00:00", "2026-01-02 10:00:00"]):
-    db.add(main.GpsRecord(device_id="DEV1", lat=str(25 + i / 100), lng=str(121 + i / 100), battery=90 - i,
-                          status="Online", source="mqtt", timestamp=ts))
+    # [更新] 拆 tracking.py 後 main.py 不再匯入 GpsRecord，改從 core.database 取（同一個類別）
+    # 原本：db.add(main.GpsRecord(device_id="DEV1", lat=str(25 + i / 100), lng=str(121 + i / 100), battery=90 - i,
+    # 原本：                      status="Online", source="mqtt", timestamp=ts))
+    import core.database as cdb
+    db.add(cdb.GpsRecord(device_id="DEV1", lat=str(25 + i / 100), lng=str(121 + i / 100), battery=90 - i,
+                         status="Online", source="mqtt", timestamp=ts))
 db.commit(); db.close()
 
 # ================= v1 API / JWT =================
@@ -97,8 +101,11 @@ show("devices/status 用 session token", c.get("/api/v1/devices/status", headers
 
 # ================= WebSocket =================
 print("== WebSocket ==")
-main.devices_state.clear()
-main.devices_state["DEV1"] = {"lng": 121.5, "lat": 25.5, "battery": 50, "status": "Online", "last_real_time": 0}
+# [更新] 拆 tracking.py 後 main.py 不再匯入 devices_state，改從 M 取（同一個物件）
+# 原本：main.devices_state.clear()
+# 原本：main.devices_state["DEV1"] = {"lng": 121.5, "lat": 25.5, "battery": 50, "status": "Online", "last_real_time": 0}
+M.devices_state.clear()
+M.devices_state["DEV1"] = {"lng": 121.5, "lat": 25.5, "battery": 50, "status": "Online", "last_real_time": 0}
 published = []
 main.mqtt_client.publish = lambda topic, payload=None, *a, **k: published.append((topic, payload))
 

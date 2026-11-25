@@ -108,11 +108,18 @@ feed("WJI/PTT/G1/DEVPTT", b"\x01\x02\x03\x04")
 feed("WJI/PTT/G1/OTHER", b"\x05\x06")
 
 # ---- 結果 ----
+# [更新] 拆 tracking.py 後 main.py 不再匯入 devices_state、GpsRecord、SosRecord（只有位置／GPS／SOS API 在用），
+#        devices_state 改從 M 取、資料表改從 core.database 取（拆分前後都有，同一個物件）
+import core.database as cdb
+# 原本：print("devices_state:", json.dumps({k: {kk: vv for kk, vv in v.items() if kk != "last_real_time"}
+# 原本：                                    for k, v in sorted(main.devices_state.items())}, ensure_ascii=False))
 print("devices_state:", json.dumps({k: {kk: vv for kk, vv in v.items() if kk != "last_real_time"}
-                                    for k, v in sorted(main.devices_state.items())}, ensure_ascii=False))
+                                    for k, v in sorted(M.devices_state.items())}, ensure_ascii=False))
 db = main.SessionLocal()
-print("gps_records:", [(r.device_id, r.lat, r.lng, r.battery, r.status, r.source) for r in db.query(main.GpsRecord).order_by(main.GpsRecord.id)])
-print("sos_records:", [(r.device_id, r.channel, r.lat, r.lng) for r in db.query(main.SosRecord).order_by(main.SosRecord.id)])
+# 原本：print("gps_records:", [(r.device_id, r.lat, r.lng, r.battery, r.status, r.source) for r in db.query(main.GpsRecord).order_by(main.GpsRecord.id)])
+# 原本：print("sos_records:", [(r.device_id, r.channel, r.lat, r.lng) for r in db.query(main.SosRecord).order_by(main.SosRecord.id)])
+print("gps_records:", [(r.device_id, r.lat, r.lng, r.battery, r.status, r.source) for r in db.query(cdb.GpsRecord).order_by(cdb.GpsRecord.id)])
+print("sos_records:", [(r.device_id, r.channel, r.lat, r.lng) for r in db.query(cdb.SosRecord).order_by(cdb.SosRecord.id)])
 print("geofence_events:", [(r.device_id, r.geofence_name, r.event_type) for r in db.query(main.GeofenceEvent).order_by(main.GeofenceEvent.id)])
 db.close()
 print("broadcasts:", json.dumps(sent, ensure_ascii=False))
