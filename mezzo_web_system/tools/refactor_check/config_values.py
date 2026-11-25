@@ -18,7 +18,9 @@ names = ["MQTT_BROKER_HOST", "MQTT_BROKER_PORT", "MQTT_TOPIC", "NVR_HOST", "NVR_
 #        改成依序找 main → core.auth → features.tak（還沒拆出來的版本 import 不到就跳過）。
 # [更新] 拆 nvr.py 後，NVR_MEDIA_PATH 只有 features/nvr.py 在用，加上 features.nvr。
 # 原本：_FALLBACK_MODULES = ["core.auth", "features.tak"]
-_FALLBACK_MODULES = ["core.auth", "features.tak", "features.nvr"]
+# [更新] 拆 stt.py 後，STT_AVAILABLE 在 features/stt.py（main.py 改用 stt.is_available()，不再有這個名稱），加上 features.stt。
+# 原本：_FALLBACK_MODULES = ["core.auth", "features.tak", "features.nvr"]
+_FALLBACK_MODULES = ["core.auth", "features.tak", "features.nvr", "features.stt"]
 
 
 def _find(n):
