@@ -8,7 +8,9 @@
 # 原本：import asyncio, random, json, os, time, base64, re
 # [拆分 devices.py] re 只有設備 API 的 _device_dict 在用，已隨設備 API 搬到 features/devices.py，main.py 不再使用
 # 原本：import asyncio, random, os, time, base64, re
-import asyncio, random, os, time, base64
+# [拆分 ptt.py] time 只有 PTT 上傳在用，已隨 PTT API 搬到 features/ptt.py，main.py 不再使用
+# 原本：import asyncio, random, os, time, base64
+import asyncio, random, os, base64
 # [拆分 v1.py] urllib.request 只有 v1 API（NVR 影片列表）在用，已隨 v1 搬到 api/v1.py，main.py 不再使用
 # import urllib.request
 # [拆分 v1.py] urllib.parse 只有 v1 API（NVR 影片列表／下載）在用，已隨 v1 搬到 api/v1.py，main.py 不再使用
@@ -19,7 +21,8 @@ import asyncio, random, os, time, base64
 # from datetime import timedelta
 # [拆分 mqtt_handler.py] paho 的 mqtt 只有 mqtt.Client() 在用，已隨 MQTT 程式搬到 features/mqtt_handler.py，main.py 不再使用
 # import paho.mqtt.client as mqtt
-from datetime import datetime
+# [拆分 ptt.py] datetime 只有 PTT 上傳在用，已隨 PTT API 搬到 features/ptt.py，main.py 不再使用
+# from datetime import datetime
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -33,7 +36,9 @@ except ImportError:
 # 原本：from fastapi import FastAPI, WebSocket, Depends, HTTPException, Header, File, UploadFile, Form
 # [拆分 users.py] Header 只有 /api/logout 在用，已隨使用者 API 搬到 features/users.py，main.py 不再使用
 # 原本：from fastapi import FastAPI, Depends, HTTPException, Header, File, UploadFile, Form
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form
+# [拆分 ptt.py] Depends、HTTPException、File、UploadFile、Form 只有音檔／PTT API 在用，已隨它們搬到 features/ptt.py，main.py 不再使用
+# 原本：from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 # [拆分 webrtc.py] HTMLResponse 只有 /view/{device_id} 在用，已隨路由搬到 features/webrtc.py，main.py 不再使用
@@ -45,7 +50,8 @@ from fastapi.responses import FileResponse
 # from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Table, Boolean, Text, text
 # from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+# [拆分 ptt.py] Session 只有音檔／PTT API 在用，已隨它們搬到 features/ptt.py，main.py 不再使用
+# from sqlalchemy.orm import Session
 
 # ====== 環境設定 ======
 # 環境變數，以及 PyJWT、aiohttp 的選裝檢查搬到 config.py 了
@@ -58,7 +64,9 @@ from core.config import (
     MQTT_BROKER_HOST, MQTT_BROKER_PORT, MQTT_TOPIC,
     # [拆分 nvr.py] NVR_MEDIA_PATH 只有 NVR 本機磁碟 API 在用，已隨路由搬到 features/nvr.py，main.py 不再使用
     # 原本：NVR_HOST, NVR_AUTH, AUDIO_BASE_PATH, NVR_MEDIA_PATH,
-    NVR_HOST, NVR_AUTH, AUDIO_BASE_PATH,
+    # [拆分 ptt.py] AUDIO_BASE_PATH 只有音檔 API 在用，已隨它們搬到 features/ptt.py，main.py 不再使用
+    # 原本：NVR_HOST, NVR_AUTH, AUDIO_BASE_PATH,
+    NVR_HOST, NVR_AUTH,
     TAK_SERVER_HOST, TAK_SERVER_PORT,
     # [拆分 auth.py] _pyjwt、JWT_SECRET 只有 JWT 函式在用，已隨函式搬到 core/auth.py，main.py 不再使用
     # 原本：_pyjwt, JWT_AVAILABLE, JWT_SECRET, JWT_EXPIRE_HOURS,
@@ -71,10 +79,13 @@ from core.config import (
 # ====== STT (語音轉文字) 相依套件（選裝）======
 # faster-whisper 選裝檢查、_whisper_model、STT_AVAILABLE、_load_whisper_model 搬到 features/stt.py 了（原樣搬移）。
 # STT_AVAILABLE 啟動後才會變成 True，所以 main.py 不匯入它，改用 stt.is_available() 讀取（見 stt.py 說明）
-from features import stt
+# [拆分 ptt.py] stt.is_available() 最後一個在 main 的使用者（PTT 上傳）已搬到 features/ptt.py，main.py 不再使用
+# from features import stt
 # [拆分 mqtt_handler.py] transcribe_pcm_bytes 只有 mqtt_stt_worker 在用，已隨它搬到 features/mqtt_handler.py，main.py 不再匯入
 # 原本：from features.stt import _load_whisper_model, pcm_to_wav_bytes, transcribe_bilingual, transcribe_pcm_bytes
-from features.stt import _load_whisper_model, pcm_to_wav_bytes, transcribe_bilingual
+# [拆分 ptt.py] pcm_to_wav_bytes、transcribe_bilingual 只有 PTT 上傳在用，已隨它搬到 features/ptt.py，main.py 不再匯入
+# 原本：from features.stt import _load_whisper_model, pcm_to_wav_bytes, transcribe_bilingual
+from features.stt import _load_whisper_model
 
 # ====== WebRTC 相依套件（選裝）======
 # WebRTC 選裝檢查（av、aiortc、WEBRTC_AVAILABLE）搬到 features/webrtc.py 了（原樣搬移），
@@ -90,8 +101,10 @@ from core.database import (
     # 原本：GpsRecord, WhatsAppLog, SosRecord, PttRecord,
     # [拆分 tracking.py] GpsRecord、SosRecord 只有 GPS 歷史／SOS 紀錄 API 在用，已隨它們搬到 features/tracking.py，main.py 不再使用
     # 原本：GpsRecord, SosRecord, PttRecord,
-    PttRecord,
-    get_db,
+    # [拆分 ptt.py] PttRecord 只有 PTT API 在用，已隨它們搬到 features/ptt.py，main.py 不再使用
+    # 原本：PttRecord,
+    # [拆分 ptt.py] get_db 最後一個在 main 的使用者（音檔／PTT API）已搬到 features/ptt.py，main.py 不再使用
+    # 原本：get_db,
 )
 
 # Geofence / GeofenceEvent 模型定義在 geofence.py，由 database.py 呼叫 init_models() 註冊（原因見下方 [修正]）；
@@ -202,7 +215,9 @@ app.include_router(mqtt_ws_router)
 # 下面 geofence.init_router() 還要用這 3 個函式，所以 init_router 留在原位、從 social 匯入；
 # process_transcript_and_notify 與 /api/social/* 路由也一起搬過去了
 from features.social import (
-    get_social_config, send_whatsapp_message, generate_viewer_url, process_transcript_and_notify,
+    # [拆分 ptt.py] process_transcript_and_notify 只有 PTT 上傳在用（mqtt_stt_worker 已在 mqtt_handler），已隨它搬到 features/ptt.py
+    # 原本：get_social_config, send_whatsapp_message, generate_viewer_url, process_transcript_and_notify,
+    get_social_config, send_whatsapp_message, generate_viewer_url,
     router as social_router,
 )
 
@@ -333,63 +348,11 @@ app.include_router(tracking_router)
 
 # ====== Geofence APIs：搬到 geofence.py 的 router 了，見下方 app.include_router(geofence_router) ======
 
-# ====== 音檔服務 API ======
-@app.get("/api/audio/{device_id}/{filename}")
-def serve_audio(device_id: str, filename: str):
-    safe_device_id = os.path.basename(device_id)
-    safe_filename  = os.path.basename(filename)
-    audio_path = os.path.join(AUDIO_BASE_PATH, safe_device_id, safe_filename)
-    if not os.path.exists(audio_path):
-        raise HTTPException(status_code=404, detail="音檔不存在")
-    return FileResponse(audio_path)
-
-@app.get("/api/audio/{device_id}")
-def list_audio(device_id: str):
-    safe_device_id = os.path.basename(device_id)
-    device_audio_dir = os.path.join(AUDIO_BASE_PATH, safe_device_id)
-    if not os.path.isdir(device_audio_dir): return []
-    files = sorted(os.listdir(device_audio_dir))
-    return [{"filename": f, "url": f"/api/audio/{safe_device_id}/{f}"} for f in files]
-
-# ====== PTT 記錄 API ======
-@app.post("/api/ptt/records")
-async def upload_ptt_record(group_id: int = Form(...), sender: str = Form(...),
-                            text: str = Form(""), audio: UploadFile = File(...),
-                            db: Session = Depends(get_db)):
-    raw_bytes = await audio.read()
-    orig_name = audio.filename or "audio"
-    if orig_name.endswith('.raw'):
-        raw_bytes = pcm_to_wav_bytes(raw_bytes, sample_rate=8000, channels=1, sampwidth=2)
-        orig_name = orig_name[:-4] + '.wav'
-    file_name = f"ptt_{int(time.time())}_{orig_name}"
-    file_path = f"static/audio/{file_name}"
-    with open(file_path, "wb") as f:
-        f.write(raw_bytes)
-    text_zh, text_en = ("", "")
-    # [拆分 stt.py] STT_AVAILABLE 會在啟動後改變，改用 stt.is_available() 在當下讀取
-    # 原本：if STT_AVAILABLE:
-    if stt.is_available():
-        loop = asyncio.get_running_loop()
-        text_zh, text_en = await loop.run_in_executor(None, transcribe_bilingual, file_path)
-    elif text.strip():
-        text_zh = text
-    final_text = text_zh or text_en or text
-    db.add(PttRecord(group_id=group_id, sender=sender, text=final_text,
-                     text_zh=text_zh, text_en=text_en,
-                     audio_url=f"/{file_path}",
-                     timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    db.commit()
-    asyncio.create_task(process_transcript_and_notify(sender, final_text, source="upload"))
-    return {"msg": "錄音儲存成功", "transcript": final_text, "text_zh": text_zh, "text_en": text_en}
-
-@app.get("/api/ptt/records")
-def get_ptt_records(group_id: int = None, db: Session = Depends(get_db)):
-    query = db.query(PttRecord)
-    if group_id: query = query.filter(PttRecord.group_id == group_id)
-    records = query.order_by(PttRecord.id.desc()).all()
-    return [{"id": r.id, "group_id": r.group_id, "sender": r.sender, "text": r.text,
-             "text_zh": r.text_zh or "", "text_en": r.text_en or "",
-             "audio_url": r.audio_url, "timestamp": r.timestamp} for r in records]
+# ====== 音檔服務 API ／ PTT 記錄 API ======
+# /api/audio/{device_id}/{filename}、/api/audio/{device_id}、POST／GET /api/ptt/records，共 4 個路由
+# 搬到 features/ptt.py 了（原樣搬移，@app 改 @router）；在原本的位置 include，路由順序跟搬移前一樣
+from features.ptt import router as ptt_router
+app.include_router(ptt_router)
 
 # ====== Social Media / WhatsApp API ======
 # 5 個 /api/social/* 路由搬到 features/social.py 了（原樣搬移，@app 改 @router）；在原本的位置 include，路由順序跟搬移前一樣
