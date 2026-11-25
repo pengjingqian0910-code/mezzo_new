@@ -14,6 +14,14 @@ import _guard                                      # noqa: E402  先擋網路
 sys.path.insert(0, os.getcwd())
 with contextlib.redirect_stdout(io.StringIO()):
     import main
+# [更新] 拆 mqtt_handler.py 後，fastapi_loop、on_mqtt_message、ptt_buffers 在 features/mqtt_handler.py：
+#        設定 main.fastapi_loop 已經影響不到 MQTT 處理函式。有這個模組就用它，沒有（拆分前的版本）就用 main。
+#        devices_state、_audio_ws_queues、mqtt_client、manager 是同一個物件（main 匯入共用），照舊從 main 存取。
+import importlib.util
+if importlib.util.find_spec("features.mqtt_handler"):
+    from features import mqtt_handler as M
+else:
+    M = main
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -96,11 +104,13 @@ main.mqtt_client.publish = lambda topic, payload=None, *a, **k: published.append
 
 with c.websocket_connect("/ws/map-data") as ws_map, c.websocket_connect("/ws/ptt") as ws_ptt:
     print("map-data 連線後第一則:", json.dumps(clean(ws_map.receive_json()), ensure_ascii=False))
-    main.fastapi_loop = ws_map.portal.call(asyncio.get_running_loop)   # 跟 startup 一樣：MQTT 執行緒把工作丟回 app 的迴圈
+    # 原本：main.fastapi_loop = ws_map.portal.call(asyncio.get_running_loop)   # 跟 startup 一樣：MQTT 執行緒把工作丟回 app 的迴圈
+    M.fastapi_loop = ws_map.portal.call(asyncio.get_running_loop)   # 跟 startup 一樣：MQTT 執行緒把工作丟回 app 的迴圈
 
     def feed(topic, payload):
         with contextlib.redirect_stdout(io.StringIO()):
-            main.on_mqtt_message(None, None, Msg(topic, payload))
+            # 原本：main.on_mqtt_message(None, None, Msg(topic, payload))
+            M.on_mqtt_message(None, None, Msg(topic, payload))
 
     feed("WJI/GPS/DEV1", json.dumps({"device_id": "DEV1", "lat": 25.05, "lng": 121.05, "battery": 49}).encode())
     print("map-data 收到（GPS 進警戒區）:", json.dumps(clean(ws_map.receive_json()), ensure_ascii=False))
@@ -113,7 +123,9 @@ with c.websocket_connect("/ws/map-data") as ws_map, c.websocket_connect("/ws/ptt
     ws_ptt.send_text(json.dumps({"action": "noop"}))
     ws_map.portal.call(asyncio.sleep, 0.2)
     print("ptt publish 給 MQTT:", published)
-print("關閉後 manager 連線數:", len(main.manager.active_connections), "ptt_manager:", len(main.ptt_manager.active_connections))
+# [更新] 拆 mqtt_handler.py 後 main.py 不再匯入 ptt_manager，改從 M 取（同一個物件）
+# 原本：print("關閉後 manager 連線數:", len(main.manager.active_connections), "ptt_manager:", len(main.ptt_manager.active_connections))
+print("關閉後 manager 連線數:", len(main.manager.active_connections), "ptt_manager:", len(M.ptt_manager.active_connections))
 
 # v1 即時語音 WebSocket
 for label, url in [("沒帶 token", "/api/v1/live/DEV1/audio/ws"),
@@ -127,9 +139,11 @@ for label, url in [("沒帶 token", "/api/v1/live/DEV1/audio/ws"),
 
 with c.websocket_connect(f"/api/v1/live/DEV1/audio/ws?token={op_jwt}") as w:
     print("audio ws op1 DEV1:", clean(w.receive_json()))
-    main.fastapi_loop = w.portal.call(asyncio.get_running_loop)
+    # 原本：main.fastapi_loop = w.portal.call(asyncio.get_running_loop)
+    M.fastapi_loop = w.portal.call(asyncio.get_running_loop)
     with contextlib.redirect_stdout(io.StringIO()):
-        main.on_mqtt_message(None, None, Msg("WJI/PTT/G1/DEV1", b"\x0a\x0b"))
+        # 原本：main.on_mqtt_message(None, None, Msg("WJI/PTT/G1/DEV1", b"\x0a\x0b"))
+        M.on_mqtt_message(None, None, Msg("WJI/PTT/G1/DEV1", b"\x0a\x0b"))
     print("audio ws 收到:", clean(w.receive_json()))
 with c.websocket_connect(f"/api/v1/live/DEV1/audio/ws?token={st}") as w:
     print("audio ws 用 session token:", clean(w.receive_json()))

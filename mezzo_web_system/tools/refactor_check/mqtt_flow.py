@@ -13,11 +13,20 @@ import _guard                                      # noqa: E402  先擋網路
 sys.path.insert(0, os.getcwd())
 with contextlib.redirect_stdout(io.StringIO()):
     import main
+# [更新] 拆 mqtt_handler.py 後，fastapi_loop、on_mqtt_message、ptt_buffers 在 features/mqtt_handler.py：
+#        設定 main.fastapi_loop 已經影響不到 MQTT 處理函式。有這個模組就用它，沒有（拆分前的版本）就用 main。
+#        devices_state、_audio_ws_queues、mqtt_client、manager 是同一個物件（main 匯入共用），照舊從 main 存取。
+import importlib.util
+if importlib.util.find_spec("features.mqtt_handler"):
+    from features import mqtt_handler as M
+else:
+    M = main
 
 # ---- 背景事件迴圈，模擬 startup 設定的 fastapi_loop ----
 loop = asyncio.new_event_loop()
 threading.Thread(target=loop.run_forever, daemon=True).start()
-main.fastapi_loop = loop
+# 原本：main.fastapi_loop = loop
+M.fastapi_loop = loop
 
 
 def drain():
@@ -43,8 +52,11 @@ async def ptt_bc(msg):
 
 
 main.manager.broadcast = map_bc
-main.ptt_manager.broadcast = ptt_bc
-main.ptt_manager.active_connections.append(object())        # 讓「有 /ws/ptt 連線」的分支會跑
+# [更新] 拆 mqtt_handler.py 後 main.py 不再匯入 ptt_manager（只有 MQTT 程式在用），改從 M 取（同一個物件）
+# 原本：main.ptt_manager.broadcast = ptt_bc
+# 原本：main.ptt_manager.active_connections.append(object())        # 讓「有 /ws/ptt 連線」的分支會跑
+M.ptt_manager.broadcast = ptt_bc
+M.ptt_manager.active_connections.append(object())        # 讓「有 /ws/ptt 連線」的分支會跑
 
 
 class Msg:
@@ -55,7 +67,8 @@ class Msg:
 def feed(topic, payload):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        main.on_mqtt_message(None, None, Msg(topic, payload))
+        # 原本：main.on_mqtt_message(None, None, Msg(topic, payload))
+        M.on_mqtt_message(None, None, Msg(topic, payload))
         drain()
     out = [l for l in buf.getvalue().splitlines() if l.strip()]
     print(f"feed {topic:24} -> printed {out}")
@@ -109,5 +122,6 @@ async def _drain_queue():
 
 
 print("v1 audio queue:", asyncio.run_coroutine_threadsafe(_drain_queue(), loop).result())
-print("ptt_buffers (STT):", sorted(main.ptt_buffers))
+# 原本：print("ptt_buffers (STT):", sorted(main.ptt_buffers))
+print("ptt_buffers (STT):", sorted(M.ptt_buffers))
 _guard.report()
