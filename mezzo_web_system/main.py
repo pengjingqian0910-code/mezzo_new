@@ -88,7 +88,9 @@ from core.database import (
     User, Device, NVRConfig, MqttConfig, SocialMediaConfig, TakServerConfig,
     # [拆分 social.py] WhatsAppLog 只有 process_transcript_and_notify 與 /api/social/logs 在用，已隨函式搬到 features/social.py，main.py 不再使用
     # 原本：GpsRecord, WhatsAppLog, SosRecord, PttRecord,
-    GpsRecord, SosRecord, PttRecord,
+    # [拆分 tracking.py] GpsRecord、SosRecord 只有 GPS 歷史／SOS 紀錄 API 在用，已隨它們搬到 features/tracking.py，main.py 不再使用
+    # 原本：GpsRecord, SosRecord, PttRecord,
+    PttRecord,
     get_db,
 )
 
@@ -145,7 +147,9 @@ from features import mqtt_handler
 from features.mqtt_handler import (
     # [拆分 v1.py] _audio_ws_queues 只有 v1 即時語音 WebSocket 在用，已隨 v1 搬到 api/v1.py，main.py 不再匯入
     # 原本：_get_mqtt_cfg, devices_state, _audio_ws_queues, mqtt_client,
-    _get_mqtt_cfg, devices_state, mqtt_client,
+    # [拆分 tracking.py] devices_state 只有位置／GPS 即時 API 在用，已隨它們搬到 features/tracking.py，main.py 不再匯入
+    # 原本：_get_mqtt_cfg, devices_state, mqtt_client,
+    _get_mqtt_cfg, mqtt_client,
     telemetry_broadcaster, mqtt_stt_worker,
     router as mqtt_ws_router, config_router as mqtt_config_router,
 )
@@ -321,55 +325,11 @@ app.include_router(tak_router)
 # 放在原本的位置 include，路由順序跟搬移前一樣
 app.include_router(nvr_router)
 
-# ====== 即時設備位置 API ======
-@app.get("/api/devices/positions")
-def get_device_positions():
-    return devices_state
-
-@app.get("/api/gps/realtime")
-def gps_realtime():
-    return {dev_id: {"lat": s["lat"], "lng": s["lng"],
-                     "battery": s["battery"], "status": s["status"],
-                     "is_realtime": time.time() - s.get("last_real_time", 0) <= 10}
-            for dev_id, s in devices_state.items()}
-
-@app.get("/api/gps/history")
-def gps_history(device_ids: str, start: str = None, end: str = None,
-                limit: int = 2000, source: str = None, db: Session = Depends(get_db)):
-    ids = [d.strip() for d in device_ids.split(",") if d.strip()]
-    if not ids: raise HTTPException(400, "至少提供一個 device_id")
-    query = db.query(GpsRecord).filter(GpsRecord.device_id.in_(ids))
-    if start:  query = query.filter(GpsRecord.timestamp >= start)
-    if end:    query = query.filter(GpsRecord.timestamp <= end)
-    if source: query = query.filter(GpsRecord.source == source)
-    records = query.order_by(GpsRecord.timestamp.asc()).limit(limit).all()
-    result: dict = {}
-    for r in records:
-        if r.device_id not in result: result[r.device_id] = []
-        result[r.device_id].append({"lat": float(r.lat), "lng": float(r.lng),
-                                    "battery": r.battery, "status": r.status,
-                                    "source": r.source, "timestamp": r.timestamp})
-    return result
-
-@app.get("/api/gps/history/{device_id}")
-def gps_history_single(device_id: str, start: str = None, end: str = None,
-                       limit: int = 1000, source: str = None, db: Session = Depends(get_db)):
-    query = db.query(GpsRecord).filter(GpsRecord.device_id == device_id)
-    if start:  query = query.filter(GpsRecord.timestamp >= start)
-    if end:    query = query.filter(GpsRecord.timestamp <= end)
-    if source: query = query.filter(GpsRecord.source == source)
-    records = query.order_by(GpsRecord.timestamp.asc()).limit(limit).all()
-    return [{"lat": float(r.lat), "lng": float(r.lng),
-             "battery": r.battery, "status": r.status,
-             "source": r.source, "timestamp": r.timestamp} for r in records]
-
-# ====== SOS 記錄 API ======
-@app.get("/api/sos/records")
-def get_sos_records(limit: int = 100, db: Session = Depends(get_db)):
-    rows = db.query(SosRecord).order_by(SosRecord.id.desc()).limit(limit).all()
-    return [{"id": r.id, "device_id": r.device_id, "channel": r.channel,
-             "lat": float(r.lat or 0), "lng": float(r.lng or 0),
-             "timestamp": r.timestamp} for r in rows]
+# ====== 即時設備位置 API ／ SOS 記錄 API ======
+# /api/devices/positions、/api/gps/realtime、/api/gps/history、/api/gps/history/{device_id}、/api/sos/records，共 5 個路由
+# 搬到 features/tracking.py 了（原樣搬移，@app 改 @router）；在原本的位置 include，路由順序跟搬移前一樣
+from features.tracking import router as tracking_router
+app.include_router(tracking_router)
 
 # ====== Geofence APIs：搬到 geofence.py 的 router 了，見下方 app.include_router(geofence_router) ======
 
