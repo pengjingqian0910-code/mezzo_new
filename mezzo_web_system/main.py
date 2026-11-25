@@ -29,13 +29,16 @@ except ImportError:
 # 原本：from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Header, File, UploadFile, Form
 # [拆分 v1.py] WebSocket 只有 v1 即時語音 WebSocket 在用，已隨 v1 搬到 api/v1.py，main.py 不再使用
 # 原本：from fastapi import FastAPI, WebSocket, Depends, HTTPException, Header, File, UploadFile, Form
-from fastapi import FastAPI, Depends, HTTPException, Header, File, UploadFile, Form
+# [拆分 users.py] Header 只有 /api/logout 在用，已隨使用者 API 搬到 features/users.py，main.py 不再使用
+# 原本：from fastapi import FastAPI, Depends, HTTPException, Header, File, UploadFile, Form
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 # [拆分 webrtc.py] HTMLResponse 只有 /view/{device_id} 在用，已隨路由搬到 features/webrtc.py，main.py 不再使用
 # 原本：from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.responses import FileResponse
-from typing import Optional
+# [拆分 users.py] Optional 只有 /api/logout 在用，已隨使用者 API 搬到 features/users.py，main.py 不再使用
+# from typing import Optional
 # [拆分 database.py] 下面這些 sqlalchemy 名稱只有 Model 定義在用，已隨 Model 搬到 database.py，main.py 不再使用
 # from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Table, Boolean, Text, text
 # from sqlalchemy.orm import declarative_base, sessionmaker, relationship, Session
@@ -112,10 +115,13 @@ from features.tak import _start_tak_tcp_server, router as tak_router
 # _sessions、create_session、get_current_user、_v1_err、_create_jwt、_decode_jwt、
 # get_v1_user、require_v1_admin、require_admin 搬到 core/auth.py 了（原樣搬移）
 from core.auth import (
-    _sessions, create_session, get_current_user,
+    # [拆分 users.py] _sessions、create_session 只有登入／登出在用，已隨使用者 API 搬到 features/users.py，main.py 不再匯入
+    # 原本：_sessions, create_session, get_current_user,
+    get_current_user,
     # [拆分 v1.py] _v1_err、_create_jwt、_decode_jwt、get_v1_user、require_v1_admin 只有 v1 API 在用，已隨 v1 搬到 api/v1.py
     # 原本：_v1_err, _create_jwt, _decode_jwt, get_v1_user, require_v1_admin, require_admin,
-    require_admin,
+    # [拆分 users.py] require_admin 只有重設密碼／指派管理者在用，已隨使用者 API 搬到 features/users.py，main.py 不再匯入
+    # 原本：require_admin,
 )
 
 # ====== NVR / MQTT 動態設定輔助函式 ======
@@ -281,64 +287,10 @@ async def startup_event():
         print(f"[MQTT] connection failed: {e}")
 
 # ====== Auth & User APIs ======
-@app.post("/api/login")
-def login(data: dict, db: Session = Depends(get_db)):
-    user = db.query(User).filter(
-        User.username == data.get("username"),
-        User.password == data.get("password")
-    ).first()
-    if not user: raise HTTPException(status_code=401, detail="帳密錯誤")
-    token = create_session(user.username, user.role)
-    return {"token": token, "username": user.username, "role": user.role}
-
-@app.post("/api/logout")
-def logout(authorization: Optional[str] = Header(default=None)):
-    if authorization and authorization.startswith("Bearer "):
-        _sessions.pop(authorization[7:], None)
-    return {"msg": "已登出"}
-
-@app.post("/api/register")
-def register(data: dict, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.username == data.get("username")).first():
-        raise HTTPException(status_code=400, detail="帳號已存在")
-    db.add(User(username=data.get("username"), password=data.get("password"),
-                email=data.get("email"), role="operator"))
-    db.commit()
-    return {"msg": "註冊成功"}
-
-@app.get("/api/users")
-def get_users(db: Session = Depends(get_db), _user: dict = Depends(get_current_user)):
-    return [{"username": u.username, "email": u.email, "role": u.role,
-             "whatsapp": u.whatsapp or "",
-             "manager": u.manager.username if u.manager else None}
-            for u in db.query(User).all()]
-
-@app.put("/api/users/{username}/whatsapp")
-def update_whatsapp(username: str, data: dict, db: Session = Depends(get_db),
-                    _user: dict = Depends(get_current_user)):
-    user = db.query(User).filter(User.username == username).first()
-    if not user: raise HTTPException(status_code=404, detail="使用者不存在")
-    user.whatsapp = data.get("whatsapp", "").strip()
-    db.commit()
-    return {"msg": "WhatsApp 號碼已更新"}
-
-@app.put("/api/users/{username}/reset_password")
-def reset_pwd(username: str, data: dict, db: Session = Depends(get_db),
-              _user: dict = Depends(require_admin)):
-    user = db.query(User).filter(User.username == username).first()
-    if user: user.password = data.get("new_password")
-    db.commit()
-    return {"msg": "密碼已重設"}
-
-@app.put("/api/users/{username}/assign_manager")
-def assign_mgr(username: str, data: dict, db: Session = Depends(get_db),
-               _user: dict = Depends(require_admin)):
-    user = db.query(User).filter(User.username == username).first()
-    mgr  = db.query(User).filter(User.username == data.get("manager_username")).first()
-    user.manager_id = mgr.id if mgr else None
-    user.role = data.get("role", user.role)
-    db.commit()
-    return {"msg": "權限與群組已更新"}
+# /api/login、/api/logout、/api/register、/api/users 與使用者 WhatsApp／重設密碼／指派管理者，共 7 個路由
+# 搬到 features/users.py 了（原樣搬移，@app 改 @router）；在原本的位置 include，路由順序跟搬移前一樣
+from features.users import router as users_router
+app.include_router(users_router)
 
 # ====== Device APIs ======
 def _device_dict(d):
