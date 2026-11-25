@@ -30,6 +30,13 @@ class User(Base):
     role          = Column(String, default="operator")
     whatsapp      = Column(String, nullable=True)
     manager_id    = Column(Integer, ForeignKey('users.id'), nullable=True)
+    # TODO（2026-11-25 拆 users.py 實測時發現，拆分前就有，之後回來修）：
+    #   這個關聯方向相反。remote_side=[id] 讓 managed_users 變成多對一，結果：
+    #   u.managed_users 拿到的是「u 的管理者」（單一 User 或 None），u.manager 拿到的是「u 管理的人」（list）。
+    #   影響：(1) 有人被指派管理者後，GET /api/users（features/users.py 的 u.manager.username）回 500；
+    #         (2) group_manager 查設備：api/v1.py 的 _get_user_devices 與 main.py 設備 API 的
+    #             `for u in user.managed_users` 會 TypeError → 500。
+    #   修的時候要一起檢查所有用到 manager／managed_users 的地方。重現：指派管理者後打 GET /api/users。
     managed_users = relationship("User", backref="manager", remote_side=[id])
     devices       = relationship("Device", secondary=user_device_link, backref="users")
 
