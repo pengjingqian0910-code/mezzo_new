@@ -3,9 +3,9 @@
 --------
 環境變數，以及 PyJWT、aiohttp 兩個選裝套件的檢查。
 
-STT（faster-whisper）、WebRTC（aiortc）的選裝檢查刻意留在 main.py：
-- STT：啟動時才用 global 把 STT_AVAILABLE 改成 True，放這裡 main.py 會讀不到更新後的值
-- WebRTC：沒裝 aiortc 時 av / RTCPeerConnection 等名稱不存在，main.py 無法 from config import
+STT（faster-whisper）、WebRTC（aiortc）的選裝檢查不放這裡，放在各自的模組：
+- STT：features/stt.py。啟動時才用 global 把 STT_AVAILABLE 改成 True，其他模組要用 stt.is_available() 在當下讀取
+- WebRTC：features/webrtc.py。沒裝 aiortc 時 av / RTCPeerConnection 等名稱不存在，只在那個模組裡使用
 
 這支檔案不 import main。
 """
