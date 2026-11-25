@@ -61,5 +61,7 @@ print(f"{'_pyjwt':18} {getattr(_find('_pyjwt')[1], '__name__', None)!r}")
 # [更新] 拆 api/v1.py 後 main.py 不再匯入 aiohttp，改用 _find 依序找（輸出格式不變）
 # 原本：print(f"{'aiohttp':18} {getattr(getattr(main, 'aiohttp', None), '__name__', None)!r}")
 print(f"{'aiohttp':18} {getattr(_find('aiohttp')[1], '__name__', None)!r}")
-print("audio dir exists  ", os.path.isdir(getattr(main, "AUDIO_BASE_PATH", "")))
+# [更新] 拆 ptt.py 後 main.py 不再匯入 AUDIO_BASE_PATH（只有音檔 API 在用），改用 _find 依序找（輸出格式不變）
+# 原本：print("audio dir exists  ", os.path.isdir(getattr(main, "AUDIO_BASE_PATH", "")))
+print("audio dir exists  ", os.path.isdir(_find("AUDIO_BASE_PATH")[1] or ""))
 print("import-time prints:", sorted(set(l for l in buf.getvalue().splitlines() if l.strip())))
