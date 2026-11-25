@@ -87,7 +87,9 @@ async def _make_queue():
 
 
 audio_q = asyncio.run_coroutine_threadsafe(_make_queue(), loop).result()
-main._audio_ws_queues.setdefault("DEVPTT", set()).add(audio_q)
+# [更新] 拆 api/v1.py 後 main.py 不再匯入 _audio_ws_queues（只有 v1 語音 WebSocket 與 MQTT 程式在用），改從 M 取（同一個物件）
+# 原本：main._audio_ws_queues.setdefault("DEVPTT", set()).add(audio_q)
+M._audio_ws_queues.setdefault("DEVPTT", set()).add(audio_q)
 
 # ---- 1. GPS ----
 feed("WJI/GPS/dev1", json.dumps({"device_id": "dev1", "lat": 25.05, "lng": 121.05, "battery": 80}).encode())

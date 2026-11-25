@@ -20,7 +20,10 @@ names = ["MQTT_BROKER_HOST", "MQTT_BROKER_PORT", "MQTT_TOPIC", "NVR_HOST", "NVR_
 # 原本：_FALLBACK_MODULES = ["core.auth", "features.tak"]
 # [更新] 拆 stt.py 後，STT_AVAILABLE 在 features/stt.py（main.py 改用 stt.is_available()，不再有這個名稱），加上 features.stt。
 # 原本：_FALLBACK_MODULES = ["core.auth", "features.tak", "features.nvr"]
-_FALLBACK_MODULES = ["core.auth", "features.tak", "features.nvr", "features.stt"]
+# [更新] 拆 api/v1.py 後，WEBRTC_AVAILABLE、aiohttp（以及 JWT_AVAILABLE 等）只有 v1 在用，main.py 不再匯入；
+#        WEBRTC_AVAILABLE 在 features.webrtc、aiohttp 等在 core.config，加上這兩個。
+# 原本：_FALLBACK_MODULES = ["core.auth", "features.tak", "features.nvr", "features.stt"]
+_FALLBACK_MODULES = ["core.auth", "features.tak", "features.nvr", "features.stt", "features.webrtc", "core.config"]
 
 
 def _find(n):
@@ -55,6 +58,8 @@ for n in names:
     print(f"{n:18} {type(v).__name__:5} {v!r}")
 # 原本：print(f"{'_pyjwt':18} {getattr(getattr(main, '_pyjwt', None), '__name__', None)!r}")
 print(f"{'_pyjwt':18} {getattr(_find('_pyjwt')[1], '__name__', None)!r}")
-print(f"{'aiohttp':18} {getattr(getattr(main, 'aiohttp', None), '__name__', None)!r}")
+# [更新] 拆 api/v1.py 後 main.py 不再匯入 aiohttp，改用 _find 依序找（輸出格式不變）
+# 原本：print(f"{'aiohttp':18} {getattr(getattr(main, 'aiohttp', None), '__name__', None)!r}")
+print(f"{'aiohttp':18} {getattr(_find('aiohttp')[1], '__name__', None)!r}")
 print("audio dir exists  ", os.path.isdir(getattr(main, "AUDIO_BASE_PATH", "")))
 print("import-time prints:", sorted(set(l for l in buf.getvalue().splitlines() if l.strip())))

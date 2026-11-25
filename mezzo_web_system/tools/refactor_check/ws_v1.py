@@ -147,5 +147,7 @@ with c.websocket_connect(f"/api/v1/live/DEV1/audio/ws?token={op_jwt}") as w:
     print("audio ws 收到:", clean(w.receive_json()))
 with c.websocket_connect(f"/api/v1/live/DEV1/audio/ws?token={st}") as w:
     print("audio ws 用 session token:", clean(w.receive_json()))
-print("關閉後語音訂閱佇列:", {k: len(v) for k, v in main._audio_ws_queues.items()})
+# [更新] 拆 api/v1.py 後 main.py 不再匯入 _audio_ws_queues，改從 M 取（同一個物件）
+# 原本：print("關閉後語音訂閱佇列:", {k: len(v) for k, v in main._audio_ws_queues.items()})
+print("關閉後語音訂閱佇列:", {k: len(v) for k, v in M._audio_ws_queues.items()})
 _guard.report()
