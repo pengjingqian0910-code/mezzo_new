@@ -11,7 +11,9 @@ NVR 模組
 @config_router.xxx / @router.xxx（原本寫法以註解保留）。
 需要的東西直接從 core/ 匯入；這支檔案不 import main。
 """
-import os, asyncio, base64, json, re
+# [修正 2026-11-26] 加 subprocess（/api/nvr/local/stream 改用 subprocess.Popen 啟動 ffmpeg）
+# 原本：import os, asyncio, base64, json, re
+import os, asyncio, base64, json, re, subprocess
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -429,7 +431,9 @@ async def nvr_local_file(ch: int, date: str, filename: str):
     return FileResponse(file_path, media_type="video/avi",
                         filename=safe_filename)
 
-# TODO（2026-11-25 拆 nvr.py 實測時發現，拆分前就有，之後回來修）：
+# [已修正 2026-11-26] Windows reload 模式下一律 500（NotImplementedError），改用 subprocess.Popen，見函式內說明。
+# 原本的 TODO：
+#   TODO（2026-11-25 拆 nvr.py 實測時發現，拆分前就有，之後回來修）：
 #   Windows 上用 `python main.py`（reload 模式）啟動時，這個 API 一律回 500 NotImplementedError。
 #   原因：reload 模式在 Windows 用的事件迴圈不支援 asyncio.create_subprocess_exec，ffmpeg 啟動不了。
 #   Docker（Linux）部署應該正常，未實測。重現：有 AVI 檔時打 /api/nvr/local/stream?ch=..&date=..&filename=xxx.avi
@@ -462,19 +466,26 @@ async def nvr_local_stream(ch: int, date: str, filename: str):
         "pipe:1"
     ]
 
+    # [修正 2026-11-26] 原本用 asyncio.create_subprocess_exec 啟動 ffmpeg。Windows 上 `python main.py`（reload 模式）時，
+    # uvicorn 0.29 會改用 WindowsSelectorEventLoopPolicy，這種事件迴圈不支援子程序 → NotImplementedError → 一律 500。
+    # 改用 subprocess.Popen 啟動，讀 stdout 丟到執行緒（run_in_executor），在任何事件迴圈都能用（Docker／Linux 也一樣）。
+    # read1(65536) 跟原本 StreamReader.read(65536) 一樣：有資料就回傳（最多 65536 bytes），結束時回傳 b""。
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL
-        )
+        # 原本：proc = await asyncio.create_subprocess_exec(
+        # 原本：    *cmd,
+        # 原本：    stdout=asyncio.subprocess.PIPE,
+        # 原本：    stderr=asyncio.subprocess.DEVNULL
+        # 原本：)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         raise HTTPException(503, "伺服器未安裝 ffmpeg，請先安裝後重啟")
 
     async def gen():
+        loop = asyncio.get_running_loop()
         try:
             while True:
-                chunk = await proc.stdout.read(65536)
+                # 原本：chunk = await proc.stdout.read(65536)
+                chunk = await loop.run_in_executor(None, proc.stdout.read1, 65536)
                 if not chunk:
                     break
                 yield chunk
