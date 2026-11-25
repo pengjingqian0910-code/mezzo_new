@@ -7,7 +7,8 @@ _device_dict（設備資料＋由 NVR 設定組出 rtsp_url）、設備清單（
 
 從 main.py 原樣搬出 295–386 行；唯一的修改是路由的 @app.xxx 改成 @router.xxx（原本寫法以註解保留）。
 main.py 在原本的位置 include，路由順序不變。沒有 global；需要的東西直接從 core/、features/ 匯入；這支檔案不 import main。
-注意：get_devices 的 group_manager 分支用到 user.managed_users，這個關聯方向有既有 bug，見 core/database.py 的 TODO。
+get_devices 的 group_manager 分支用到 user.managed_users（u 管理的人）；這個關聯原本方向相反，2026-11-26 已在 core/database.py 修正。
+（原本：注意：get_devices 的 group_manager 分支用到 user.managed_users，這個關聯方向有既有 bug，見 core/database.py 的 TODO。）
 """
 import re
 from fastapi import APIRouter, Depends, HTTPException

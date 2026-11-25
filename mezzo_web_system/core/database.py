@@ -8,7 +8,9 @@ Geofence / GeofenceEvent 兩張表在本檔下方呼叫 geofence.init_models(Bas
 Base.metadata.create_all() 留在 main.py。
 """
 from sqlalchemy import create_engine, Column, Integer, String, ForeignKey, Table, Boolean, Text
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+# [修正 2026-11-26] 加 backref（User.managed_users 關聯修正用）
+# 原本：from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship, backref
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./mezzo.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
@@ -30,14 +32,15 @@ class User(Base):
     role          = Column(String, default="operator")
     whatsapp      = Column(String, nullable=True)
     manager_id    = Column(Integer, ForeignKey('users.id'), nullable=True)
-    # TODO（2026-11-25 拆 users.py 實測時發現，拆分前就有，之後回來修）：
-    #   這個關聯方向相反。remote_side=[id] 讓 managed_users 變成多對一，結果：
+    # [修正 2026-11-26] 原本這個關聯方向相反：remote_side=[id] 放在 managed_users 上，讓它變成多對一，結果
     #   u.managed_users 拿到的是「u 的管理者」（單一 User 或 None），u.manager 拿到的是「u 管理的人」（list）。
-    #   影響：(1) 有人被指派管理者後，GET /api/users（features/users.py 的 u.manager.username）回 500；
-    #         (2) group_manager 查設備：api/v1.py 的 _get_user_devices 與 main.py 設備 API 的
-    #             `for u in user.managed_users` 會 TypeError → 500。
-    #   修的時候要一起檢查所有用到 manager／managed_users 的地方。重現：指派管理者後打 GET /api/users。
-    managed_users = relationship("User", backref="manager", remote_side=[id])
+    #   造成：有人被指派管理者後 GET /api/users（features/users.py 的 u.manager.username）回 500；
+    #   group_manager 查設備（api/v1.py 的 _get_user_devices、features/devices.py 的 get_devices）
+    #   `for u in user.managed_users` 會 TypeError → 500。
+    # 改成 remote_side 放在 backref 的 manager 上：managed_users ＝ 一對多（u 管理的人，list），manager ＝ 多對一（u 的管理者）。
+    # 用到這兩個名稱的地方本來就是照這個意思寫的，不用改；資料表結構（manager_id 欄位）不變，不需要遷移。
+    # 原本：managed_users = relationship("User", backref="manager", remote_side=[id])
+    managed_users = relationship("User", backref=backref("manager", remote_side=[id]))
     devices       = relationship("Device", secondary=user_device_link, backref="users")
 
 class Device(Base):
