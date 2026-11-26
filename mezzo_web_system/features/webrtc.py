@@ -83,6 +83,69 @@ def viewer_page(device_id: str, db: Session = Depends(get_db)):
 webrtc_pcs: dict = {}
 
 if WEBRTC_AVAILABLE:
+    # ====== [新增 2026-11-26] 逾時提示圖（取代原本逾時時送的黑畫面）======
+    # 影像軌逾時拿不到新畫面時（攝影機斷線、重連中），aiortc 仍要求 recv() 回傳一張畫面，否則影像軌會結束。
+    # 原本送黑畫面（640×360，三個平面都填 0，實際是深綠色），使用者看不出發生什麼事；改成：
+    #   還沒收過真實畫面 → 「CONNECTING...」；收過之後中斷 → 「NO SIGNAL / RECONNECTING...」
+    # 尺寸跟最後一張真實畫面一樣（切換時解析度不跳），還沒收過就用 640×360。
+    # 文字用下面的 5×7 點陣字當場畫（Docker 映像沒有字型，不用字型檔也不用圖檔），直接產生 YUV420：
+    # 深灰底、白字、色度 128（灰階）。同一組文字與尺寸只產生一次、之後重複使用。
+    _PLACEHOLDER_CONNECTING = ("CONNECTING...",)
+    _PLACEHOLDER_NO_SIGNAL  = ("NO SIGNAL", "RECONNECTING...")
+    _FONT_5X7 = {
+        "A": (" ### ", "#   #", "#   #", "#####", "#   #", "#   #", "#   #"),
+        "C": (" ### ", "#   #", "#    ", "#    ", "#    ", "#   #", " ### "),
+        "E": ("#####", "#    ", "#    ", "#### ", "#    ", "#    ", "#####"),
+        "G": (" ### ", "#   #", "#    ", "# ###", "#   #", "#   #", " ### "),
+        "I": (" ### ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", " ### "),
+        "L": ("#    ", "#    ", "#    ", "#    ", "#    ", "#    ", "#####"),
+        "N": ("#   #", "##  #", "# # #", "#  ##", "#   #", "#   #", "#   #"),
+        "O": (" ### ", "#   #", "#   #", "#   #", "#   #", "#   #", " ### "),
+        "R": ("#### ", "#   #", "#   #", "#### ", "# #  ", "#  # ", "#   #"),
+        "S": (" ####", "#    ", "#    ", " ### ", "    #", "    #", "#### "),
+        "T": ("#####", "  #  ", "  #  ", "  #  ", "  #  ", "  #  ", "  #  "),
+        ".": ("     ", "     ", "     ", "     ", "     ", "     ", "  #  "),
+        " ": ("     ", "     ", "     ", "     ", "     ", "     ", "     "),
+    }
+    _placeholder_cache: dict = {}   # (文字, 寬, 高) → (Y, U, V 三個平面的 bytes)
+
+    def _render_placeholder(lines, width, height):
+        tmp = av.VideoFrame(width, height, "yuv420p")
+        ys = tmp.planes[0].line_size
+        y = bytearray([40]) * tmp.planes[0].buffer_size                  # 深灰底
+        u = bytes([128]) * tmp.planes[1].buffer_size                     # 色度 128 → 灰階
+        v = bytes([128]) * tmp.planes[2].buffer_size
+        cols = max(len(t) for t in lines) * 6                            # 每個字 5 格寬＋1 格間距
+        rows = len(lines) * 10 - 3                                       # 每行 7 格高＋3 格行距
+        scale = max(1, min(int(width * 0.7 / cols), int(height * 0.5 / rows)))
+        top = (height - rows * scale) // 2
+        for li, text in enumerate(lines):
+            left = (width - (len(text) * 6 - 1) * scale) // 2
+            for ci, ch in enumerate(text):
+                glyph = _FONT_5X7.get(ch, _FONT_5X7[" "])
+                for gy, row in enumerate(glyph):
+                    for gx, bit in enumerate(row):
+                        if bit != "#":
+                            continue
+                        x0 = left + (ci * 6 + gx) * scale
+                        y0 = top + (li * 10 + gy) * scale
+                        for yy in range(y0, y0 + scale):
+                            if 0 <= yy < height and x0 >= 0 and x0 + scale <= width:
+                                y[yy * ys + x0: yy * ys + x0 + scale] = bytes([235]) * scale   # 白字
+        return bytes(y), u, v
+
+    def _make_placeholder_frame(lines, size, pts, time_base):
+        width, height = size or (640, 360)
+        width, height = max(2, width - width % 2), max(2, height - height % 2)   # yuv420p 寬高要偶數
+        key = (lines, width, height)
+        if key not in _placeholder_cache:
+            _placeholder_cache[key] = _render_placeholder(lines, width, height)
+        frame = av.VideoFrame(width, height, "yuv420p")
+        for plane, data in zip(frame.planes, _placeholder_cache[key]):
+            plane.update(data)
+        frame.pts = pts; frame.time_base = time_base
+        return frame
+
     class MJPEGStreamTrack(VideoStreamTrack):
         kind = "video"
         def __init__(self, mjpeg_url: str):
@@ -90,6 +153,7 @@ if WEBRTC_AVAILABLE:
             self.mjpeg_url = mjpeg_url
             self._queue: asyncio.Queue = asyncio.Queue(maxsize=5)
             self._fetch_task = None
+            self._last_size = None   # [新增 2026-11-26] 最後一張真實畫面的 (寬, 高)，逾時提示圖用
 
         async def _fetch_frames(self):
             while True:
@@ -129,18 +193,25 @@ if WEBRTC_AVAILABLE:
                 # 同時發生時，會回傳資料、把取消吞掉（3.12 才修）。關閉連線時 aiortc 取消送影像的工作，
                 # 取消被吞掉 → 工作停不下來 → pc.close()（DELETE /api/webrtc/{pc_id}）卡到 ICE 判定失效（約 40 秒）。
                 # 改用 asyncio.timeout()（3.11 起），取消會正確往上丟；逾時一樣丟 TimeoutError，下面的處理不變。
+                # 注意：asyncio.timeout 需要 Python 3.11 以上（目前本機與 Docker python:3.11-slim 都是 3.11）。
                 # 原本：jpeg = await asyncio.wait_for(self._queue.get(), timeout=5.0)
                 async with asyncio.timeout(5.0):
                     jpeg = await self._queue.get()
             except asyncio.TimeoutError:
-                return self._make_black_frame(pts, time_base)
+                # [修改 2026-11-26] 逾時改送提示圖（見上方 _make_placeholder_frame 說明）
+                # 原本：return self._make_black_frame(pts, time_base)
+                return _make_placeholder_frame(
+                    _PLACEHOLDER_NO_SIGNAL if self._last_size else _PLACEHOLDER_CONNECTING,
+                    self._last_size, pts, time_base)
             try:
                 container = av.open(io.BytesIO(jpeg), format="mjpeg")
                 for pkt in container.demux(video=0):
                     for frm in pkt.decode():
                         out = frm.reformat(format="yuv420p")
+                        self._last_size = (out.width, out.height)   # [新增 2026-11-26] 記住真實畫面尺寸
                         out.pts = pts; out.time_base = time_base; return out
             except Exception: pass
+            # 單張 JPEG 解碼失敗：維持原本送黑畫面（通常只是一張壞掉，換成提示圖會閃一下）
             return self._make_black_frame(pts, time_base)
 
         def stop(self):
@@ -163,6 +234,7 @@ if WEBRTC_AVAILABLE:
             self.rtsp_url = rtsp_url
             self._queue: asyncio.Queue = asyncio.Queue(maxsize=5)
             self._fetch_task = None
+            self._last_size = None   # [新增 2026-11-26] 最後一張真實畫面的 (寬, 高)，逾時提示圖用
 
         async def _fetch_frames(self):
             loop = asyncio.get_running_loop()
@@ -211,11 +283,16 @@ if WEBRTC_AVAILABLE:
                 # 原本：frame = await asyncio.wait_for(self._queue.get(), timeout=8.0)
                 async with asyncio.timeout(8.0):
                     frame = await self._queue.get()
+                self._last_size = (frame.width, frame.height)   # [新增 2026-11-26] 記住真實畫面尺寸
                 frame.pts = pts; frame.time_base = time_base; return frame
             except asyncio.TimeoutError:
-                f = av.VideoFrame(640, 360, "yuv420p")
-                for p in f.planes: p.update(bytes(p.buffer_size))
-                f.pts = pts; f.time_base = time_base; return f
+                # [修改 2026-11-26] 逾時改送提示圖（見上方 _make_placeholder_frame 說明）
+                # 原本：f = av.VideoFrame(640, 360, "yuv420p")
+                # 原本：for p in f.planes: p.update(bytes(p.buffer_size))
+                # 原本：f.pts = pts; f.time_base = time_base; return f
+                return _make_placeholder_frame(
+                    _PLACEHOLDER_NO_SIGNAL if self._last_size else _PLACEHOLDER_CONNECTING,
+                    self._last_size, pts, time_base)
 
         def stop(self):
             if self._fetch_task and not self._fetch_task.done():
