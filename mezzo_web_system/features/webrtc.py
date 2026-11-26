@@ -142,7 +142,9 @@ if WEBRTC_AVAILABLE:
                 self._fetch_task.cancel()
             super().stop()
 
-    # TODO（2026-11-25 拆 webrtc.py 實測時發現，拆分前就有，之後回來修）：
+    # [已修正 2026-11-26] RTSP 連線關閉時伺服器崩潰：container 改由 _stream_worker 執行緒自己關閉，見 _fetch_frames 內說明。
+    # 原本的 TODO：
+    #   TODO（2026-11-25 拆 webrtc.py 實測時發現，拆分前就有，之後回來修）：
     #   RTSP 來源的 WebRTC 連線關閉時（DELETE /api/webrtc/{pc_id} 或客戶端斷線），整個伺服器程序偶發崩潰
     #   （exit code 0xC0000005 access violation，之後所有連線被拒）。隨機發生；MJPEG 來源不會。
     #   推測（未證實）：_fetch_frames 被取消時在事件迴圈執行緒 container.close()，
@@ -165,21 +167,30 @@ if WEBRTC_AVAILABLE:
                     def _stream_worker():
                         nonlocal container
                         container = av.open(self.rtsp_url, options={"rtsp_transport": "tcp", "stimeout": "5000000"})
-                        vs = container.streams.video[0]; vs.thread_type = "AUTO"
-                        for packet in container.demux(vs):
-                            if stop_flag["stop"] or packet.size == 0: break
-                            for frame in packet.decode():
-                                out = frame.reformat(format="yuv420p")
-                                asyncio.run_coroutine_threadsafe(self._put_frame(out), loop)
+                        # [修正 2026-11-26] container 改由這個執行緒自己在結束時關閉（見下方 finally 的說明）
+                        try:
+                            vs = container.streams.video[0]; vs.thread_type = "AUTO"
+                            for packet in container.demux(vs):
+                                if stop_flag["stop"] or packet.size == 0: break
+                                for frame in packet.decode():
+                                    out = frame.reformat(format="yuv420p")
+                                    asyncio.run_coroutine_threadsafe(self._put_frame(out), loop)
+                        finally:
+                            try: container.close()
+                            except Exception: pass
                     await loop.run_in_executor(None, _stream_worker)
                 except asyncio.CancelledError: stop_flag["stop"] = True; break
                 except Exception as ex:
                     print(f"[WebRTC/RTSP] 擷取錯誤，重連: {ex}"); await asyncio.sleep(3)
                 finally:
+                    # [修正 2026-11-26] 原本在這裡（事件迴圈執行緒）container.close()。連線關閉時這個工作被取消，
+                    # 但 run_in_executor 的 _stream_worker 執行緒不會跟著停，還在 demux／decode 同一個 container；
+                    # 兩個執行緒同時操作 PyAV container → 伺服器程序崩潰（0xC0000005／0xC0000374 heap 損壞）。
+                    # 改成這裡只設停止旗標，container 由 _stream_worker 執行緒讀到旗標、離開迴圈後自己關閉。
                     stop_flag["stop"] = True
-                    if container:
-                        try: container.close()
-                        except Exception: pass
+                    # 原本：if container:
+                    # 原本：    try: container.close()
+                    # 原本：    except Exception: pass
 
         async def _put_frame(self, frame):
             if not self._queue.full(): await self._queue.put(frame)
