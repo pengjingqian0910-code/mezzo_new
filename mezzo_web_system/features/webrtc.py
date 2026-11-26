@@ -125,7 +125,13 @@ if WEBRTC_AVAILABLE:
                 self._fetch_task = asyncio.ensure_future(self._fetch_frames())
             pts, time_base = await self.next_timestamp()
             try:
-                jpeg = await asyncio.wait_for(self._queue.get(), timeout=5.0)
+                # [修正 2026-11-26] 原本用 asyncio.wait_for。Python 3.11 的 wait_for 在「被取消」跟「queue.get 剛好拿到資料」
+                # 同時發生時，會回傳資料、把取消吞掉（3.12 才修）。關閉連線時 aiortc 取消送影像的工作，
+                # 取消被吞掉 → 工作停不下來 → pc.close()（DELETE /api/webrtc/{pc_id}）卡到 ICE 判定失效（約 40 秒）。
+                # 改用 asyncio.timeout()（3.11 起），取消會正確往上丟；逾時一樣丟 TimeoutError，下面的處理不變。
+                # 原本：jpeg = await asyncio.wait_for(self._queue.get(), timeout=5.0)
+                async with asyncio.timeout(5.0):
+                    jpeg = await self._queue.get()
             except asyncio.TimeoutError:
                 return self._make_black_frame(pts, time_base)
             try:
@@ -200,7 +206,11 @@ if WEBRTC_AVAILABLE:
                 self._fetch_task = asyncio.ensure_future(self._fetch_frames())
             pts, time_base = await self.next_timestamp()
             try:
-                frame = await asyncio.wait_for(self._queue.get(), timeout=8.0)
+                # [修正 2026-11-26] 原本用 asyncio.wait_for，Python 3.11 會在取消與拿到資料同時發生時吞掉取消，
+                # 造成 DELETE 卡約 40 秒；改用 asyncio.timeout()，原因見上面 MJPEGStreamTrack.recv 的說明。
+                # 原本：frame = await asyncio.wait_for(self._queue.get(), timeout=8.0)
+                async with asyncio.timeout(8.0):
+                    frame = await self._queue.get()
                 frame.pts = pts; frame.time_base = time_base; return frame
             except asyncio.TimeoutError:
                 f = av.VideoFrame(640, 360, "yuv420p")
